@@ -10,7 +10,11 @@ import About from "./pages/About";
 import Contact from "./pages/Contact";
 import Vision from "./pages/Vision";
 import Dashboard from "./pages/Dashboard";
+import DriverDashboard from "./pages/DriverDashboard";
 import NotFound from "./pages/NotFound";
+import ScrollToTop from "./components/ScrollToTop";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import RealTimeNotifications from "./components/RealTimeNotifications";
 
 const queryClient = new QueryClient();
 
@@ -18,8 +22,10 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
-      <Sonner />
+      <Sonner position="top-right" closeButton richColors />
       <BrowserRouter>
+        <RealTimeNotifications />
+        <ScrollToTop />
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
@@ -27,7 +33,8 @@ const App = () => (
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/vision" element={<Vision />} />
-          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/driver-dashboard" element={<ProtectedRoute><DriverDashboard /></ProtectedRoute>} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

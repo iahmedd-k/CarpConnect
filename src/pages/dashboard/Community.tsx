@@ -1,50 +1,95 @@
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Users, Star, MapPin, MessageSquare, UserCheck, TrendingUp, Shield, Award } from "lucide-react";
+import { Users, Star, MapPin, MessageSquare, UserCheck, TrendingUp, Shield, Award, Loader2, Car } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar } from "recharts";
-
-const drivers = [
-    { name: "Marcus Johnson", avatar: "MJ", rating: 4.9, rides: 142, location: "Sunset District", tags: ["Quiet", "Punctual", "Clean car"], online: true },
-    { name: "Priya Sharma", avatar: "PS", rating: 4.8, rides: 98, location: "Mission District", tags: ["Music ok", "Friendly"], online: true },
-    { name: "Elena Rodriguez", avatar: "ER", rating: 5.0, rides: 311, location: "Downtown SF", tags: ["AC always on", "Top Driver"], online: false },
-    { name: "James Kim", avatar: "JK", rating: 4.7, rides: 74, location: "Richmond District", tags: ["Electric car", "Quiet"], online: false },
-    { name: "Sophie Laurent", avatar: "SL", rating: 4.9, rides: 203, location: "Noe Valley", tags: ["Pet friendly", "Podcasts"], online: true },
-    { name: "David Chen", avatar: "DC", rating: 4.6, rides: 58, location: "Haight-Ashbury", tags: ["Budget friendly"], online: false },
-];
-
-const leaderboardData = [
-    { name: "Elena R.", rides: 311, co2: 420 },
-    { name: "Sophie L.", rides: 203, co2: 274 },
-    { name: "Marcus J.", rides: 142, co2: 191 },
-    { name: "Priya S.", rides: 98, co2: 132 },
-    { name: "James K.", rides: 74, co2: 100 },
-    { name: "David C.", rides: 58, co2: 78 },
-];
-
-const radarData = [
-    { subject: "Punctuality", A: 88 },
-    { subject: "Cleanliness", A: 76 },
-    { subject: "Friendliness", A: 92 },
-    { subject: "Safety", A: 95 },
-    { subject: "Value", A: 85 },
-    { subject: "Communication", A: 80 },
-];
+import api from "../../lib/api";
+import { DriverProfileModal } from "@/components/DriverProfileModal";
+import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 
 const Community = () => {
+    const [loading, setLoading] = useState(true);
+    const [data, setData] = useState<any>(null);
+    const [selectedDriver, setSelectedDriver] = useState<any>(null);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const navigate = useNavigate();
+
+    useEffect(() => {
+        fetchCommunityData();
+    }, []);
+
+    const fetchCommunityData = async () => {
+        try {
+            const res = await api.get("/users/community");
+            if (res.data.success) {
+                setData(res.data.data);
+            }
+        } catch (err) {
+            console.error("Failed to fetch community data:", err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleMessage = async (driverId: string) => {
+        try {
+            // Check if we have an existing booking/chat with this driver
+            const res = await api.get("/bookings");
+            const bookings = res.data.data.bookings || [];
+            const existingBooking = bookings.find((b: any) => (b.driver?._id || b.driver) === driverId);
+            
+            if (existingBooking) {
+                navigate("/driver-dashboard?tab=messages");
+            } else {
+                toast.info("Start a journey first!", {
+                    description: "You can chat with this driver once you book a ride together."
+                });
+            }
+        } catch (err) {
+            toast.error("Failed to check conversations");
+        }
+    };
+
+    if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>;
+    if (!data) return <div className="text-center py-20 text-muted-foreground">Failed to load community data</div>;
+
+    const avgCommunityRating = data.leaderboard?.length > 0
+        ? (data.leaderboard.reduce((acc: number, curr: any) => acc + curr.rating, 0) / data.leaderboard.length).toFixed(1)
+        : "4.8";
+
+    const stats = [
+        { icon: Users, label: "Community Members", value: data.totalUsers?.toString() || "0", color: "text-primary" },
+        { icon: UserCheck, label: "Top Drivers", value: data.topDrivers?.length?.toString() || "0", color: "text-emerald" },
+        { icon: Star, label: "Avg Member Rating", value: `${avgCommunityRating}★`, color: "text-amber" },
+        { icon: Shield, label: "Safety Score", value: "98%", color: "text-primary" },
+    ];
+
+    const radarData = [
+        { subject: "Punctuality", A: 92 },
+        { subject: "Cleanliness", A: 88 },
+        { subject: "Friendliness", A: 95 },
+        { subject: "Safety", A: 100 },
+        { subject: "Value", A: 85 },
+        { subject: "Communication", A: 90 },
+    ];
+
     return (
         <div className="space-y-6">
-            <div>
-                <h2 className="text-2xl font-display font-bold text-foreground">Community</h2>
-                <p className="text-sm text-muted-foreground mt-1">Your network of verified drivers and co-riders</p>
+            <div className="flex items-center justify-between">
+                <div>
+                    <h2 className="text-2xl font-display font-bold text-foreground">Community</h2>
+                    <p className="text-sm text-muted-foreground mt-1">Your network of verified drivers and co-riders</p>
+                </div>
+                <div className="flex -space-x-3 overflow-hidden">
+                   {data.topDrivers?.slice(0, 5).map((d: any) => (
+                       <img key={d._id} className="inline-block h-10 w-10 rounded-full ring-2 ring-background object-cover" src={d.profilePhoto || `https://ui-avatars.com/api/?name=${d.name}&background=random`} alt={d.name} />
+                   ))}
+                </div>
             </div>
 
             {/* Community stats */}
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {[
-                    { icon: Users, label: "Your Network", value: "23", color: "text-primary" },
-                    { icon: UserCheck, label: "Trusted Drivers", value: "8", color: "text-emerald" },
-                    { icon: Star, label: "Avg Rating Given", value: "4.8★", color: "text-amber" },
-                    { icon: Shield, label: "Trust Score", value: "94%", color: "text-primary" },
-                ].map((s, i) => (
+                {stats.map((s, i) => (
                     <motion.div
                         key={s.label}
                         initial={{ opacity: 0, y: 20 }}
@@ -70,14 +115,20 @@ const Community = () => {
                     className="bg-card rounded-2xl p-6 border border-border/50"
                 >
                     <h3 className="font-display font-bold text-foreground mb-1">Community Leaderboard</h3>
-                    <p className="text-xs text-muted-foreground mb-5">Rides completed by top members</p>
+                    <p className="text-xs text-muted-foreground mb-5">Top rated members this month</p>
                     <ResponsiveContainer width="100%" height={210}>
-                        <BarChart data={leaderboardData} layout="vertical" barSize={14}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(150,15%,90%)" horizontal={false} />
-                            <XAxis type="number" tick={{ fontSize: 10, fill: "hsl(200,10%,45%)" }} axisLine={false} tickLine={false} />
-                            <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: "hsl(200,10%,45%)" }} width={60} axisLine={false} tickLine={false} />
-                            <Tooltip contentStyle={{ background: "white", border: "1px solid hsl(150,15%,90%)", borderRadius: 12, fontSize: 12 }} />
-                            <Bar dataKey="rides" radius={[0, 6, 6, 0]} fill="hsl(168,80%,36%)" name="Rides" />
+                        <BarChart data={data.leaderboard || []} layout="vertical" barSize={12}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="hsl(150,15%,20%)" opacity={0.05} horizontal={false} />
+                            <XAxis type="number" domain={[0, 5]} hide />
+                            <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: "hsl(200,10%,45%)" }} width={80} axisLine={false} tickLine={false} />
+                            <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ background: "#111318", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, fontSize: 10, color: 'white' }} />
+                            <Bar dataKey="rating" radius={[0, 4, 4, 0]} fill="url(#leaderboardGradient)" name="Rating" />
+                            <defs>
+                                <linearGradient id="leaderboardGradient" x1="0" y1="0" x2="1" y2="0">
+                                    <stop offset="0%" stopColor="#10b981" />
+                                    <stop offset="100%" stopColor="#34d399" />
+                                </linearGradient>
+                            </defs>
                         </BarChart>
                     </ResponsiveContainer>
                 </motion.div>
@@ -88,80 +139,88 @@ const Community = () => {
                     transition={{ delay: 0.25 }}
                     className="bg-card rounded-2xl p-6 border border-border/50"
                 >
-                    <h3 className="font-display font-bold text-foreground mb-1">Your Rider Review Profile</h3>
-                    <p className="text-xs text-muted-foreground mb-4">How drivers rate your attributes</p>
+                    <h3 className="font-display font-bold text-foreground mb-1">Community DNA</h3>
+                    <p className="text-xs text-muted-foreground mb-4">Core values as rated by members</p>
                     <ResponsiveContainer width="100%" height={210}>
                         <RadarChart data={radarData}>
-                            <PolarGrid stroke="hsl(150,15%,90%)" />
-                            <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: "hsl(200,10%,45%)" }} />
-                            <Radar name="You" dataKey="A" stroke="hsl(168,80%,36%)" fill="hsl(168,80%,36%)" fillOpacity={0.25} strokeWidth={2} />
+                            <PolarGrid stroke="hsl(150,15%,20%)" opacity={0.1} />
+                            <PolarAngleAxis dataKey="subject" tick={{ fontSize: 9, fill: "hsl(200,10%,45%)" }} />
+                            <Radar name="Community" dataKey="A" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2} />
                         </RadarChart>
                     </ResponsiveContainer>
                 </motion.div>
             </div>
 
-            {/* Drivers in your network */}
+            {/* Top Drivers */}
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.3 }}
             >
                 <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-display font-bold text-foreground">Drivers You've Ridden With</h3>
-                    <button className="text-sm text-primary hover:text-primary/80 font-medium transition-colors">Browse All</button>
+                    <h3 className="font-display font-bold text-foreground">Top Rated Drivers</h3>
+                    <button className="text-xs font-bold uppercase tracking-wider text-primary hover:text-primary/80 transition-colors">View All members</button>
                 </div>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {drivers.map((driver, i) => (
+                    {data.topDrivers?.map((driver: any, i: number) => (
                         <motion.div
-                            key={driver.name}
+                            key={driver._id}
                             initial={{ opacity: 0, y: 15 }}
                             animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.35 + i * 0.07 }}
-                            className="bg-card rounded-2xl p-5 border border-border/50 hover:shadow-card hover:-translate-y-0.5 transition-all duration-300"
+                            transition={{ delay: 0.35 + i * 0.05 }}
+                            className="bg-card rounded-2xl p-5 border border-border/50 hover:border-primary/30 hover:shadow-glow transition-all duration-300"
                         >
-                            <div className="flex items-start gap-3 mb-4">
-                                <div className="relative shrink-0">
-                                    <div className="w-12 h-12 rounded-xl bg-gradient-primary flex items-center justify-center text-white font-bold">
-                                        {driver.avatar}
-                                    </div>
-                                    {driver.online && <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald rounded-full border-2 border-card" />}
+                            <div className="flex items-start gap-4 mb-4">
+                                <div className="w-12 h-12 rounded-2xl bg-gradient-primary flex items-center justify-center text-white font-bold text-lg shadow-glow overflow-hidden">
+                                    {driver.profilePhoto ? <img src={driver.profilePhoto} className="w-full h-full object-cover" /> : driver.name[0]}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <div className="font-semibold text-foreground text-sm truncate">{driver.name}</div>
-                                    <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-                                        <MapPin className="w-3 h-3" /> {driver.location}
+                                    <div className="font-bold text-foreground truncate">{driver.name}</div>
+                                    <div className="flex items-center gap-1 text-[10px] text-emerald font-bold uppercase tracking-widest mt-0.5">
+                                        <Shield className="w-3 h-3" /> Verified
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center justify-between mb-4 bg-muted/20 p-3 rounded-xl">
                                 <div className="flex items-center gap-1">
                                     <Star className="w-3.5 h-3.5 fill-amber text-amber" />
-                                    <span className="text-sm font-bold text-foreground">{driver.rating}</span>
+                                    <span className="text-sm font-black text-foreground">{driver.ratings?.average?.toFixed(1) || "5.0"}</span>
+                                    <span className="text-[10px] text-muted-foreground">({driver.ratings?.count || 0})</span>
                                 </div>
-                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                    <TrendingUp className="w-3 h-3" /> {driver.rides} rides
+                                <div className="flex items-center gap-1 text-[10px] text-muted-foreground uppercase font-bold">
+                                    <Car className="w-3 h-3" /> {driver.vehicle?.model || "Standard"}
                                 </div>
-                            </div>
-
-                            <div className="flex flex-wrap gap-1.5 mb-4">
-                                {driver.tags.map((tag) => (
-                                    <span key={tag} className="px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground text-[10px] font-medium">{tag}</span>
-                                ))}
                             </div>
 
                             <div className="flex gap-2">
-                                <button className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors">
+                                <button 
+                                    onClick={() => handleMessage(driver._id)}
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary/10 text-primary text-xs font-bold uppercase tracking-wider hover:bg-primary/20 transition-colors"
+                                >
                                     <MessageSquare className="w-3.5 h-3.5" /> Message
                                 </button>
-                                <button className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-gradient-primary text-white text-xs font-medium hover:opacity-90 transition-opacity shadow-glow">
-                                    <Award className="w-3.5 h-3.5" /> Book Again
+                                <button 
+                                    onClick={() => { setSelectedDriver(driver); setIsProfileOpen(true); }}
+                                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-gradient-primary text-white text-xs font-bold uppercase tracking-wider hover:opacity-90 transition-opacity shadow-glow"
+                                >
+                                    Profile
                                 </button>
                             </div>
                         </motion.div>
                     ))}
                 </div>
             </motion.div>
+
+            <DriverProfileModal 
+                driver={selectedDriver} 
+                isOpen={isProfileOpen} 
+                onClose={() => setIsProfileOpen(false)} 
+                onMessage={(id) => {
+                    setIsProfileOpen(false);
+                    handleMessage(id);
+                }}
+            />
         </div>
     );
 };

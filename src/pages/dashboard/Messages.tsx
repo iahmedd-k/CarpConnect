@@ -1,228 +1,256 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Search, Phone, Video, MoreVertical, Check, CheckCheck } from "lucide-react";
+import { MessageSquare, Send, Search, MoreVertical, Check, CheckCheck, Loader2, Trash2, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import api from "../../lib/api";
+import { io, Socket } from "socket.io-client";
+import { toast } from "sonner";
 
-const conversations = [
-    {
-        id: 1,
-        name: "Marcus Johnson",
-        avatar: "MJ",
-        lastMsg: "I'll be at the pickup point in 5 min!",
-        time: "9:32 AM",
-        unread: 2,
-        online: true,
-        role: "Driver",
-    },
-    {
-        id: 2,
-        name: "Priya Sharma",
-        avatar: "PS",
-        lastMsg: "Perfect, see you at 6 PM 👋",
-        time: "8:15 AM",
-        unread: 0,
-        online: true,
-        role: "Driver",
-    },
-    {
-        id: 3,
-        name: "Sarah Chen",
-        avatar: "SC",
-        lastMsg: "Could we adjust to 8:45 AM instead?",
-        time: "Yesterday",
-        unread: 0,
-        online: false,
-        role: "Rider",
-    },
-    {
-        id: 4,
-        name: "James Kim",
-        avatar: "JK",
-        lastMsg: "Thanks for the great ride! ⭐⭐⭐⭐⭐",
-        time: "Mar 7",
-        unread: 0,
-        online: false,
-        role: "Driver",
-    },
-    {
-        id: 5,
-        name: "Elena Rodriguez",
-        avatar: "ER",
-        lastMsg: "Your airport ride is confirmed ✅",
-        time: "Mar 6",
-        unread: 1,
-        online: false,
-        role: "Driver",
-    },
-];
 
-const messages = [
-    { id: 1, from: "other", text: "Hey! I'm your driver for today's morning commute.", time: "9:20 AM", read: true },
-    { id: 2, from: "me", text: "Great! What's your ETA to my location?", time: "9:21 AM", read: true },
-    { id: 3, from: "other", text: "About 8 minutes. I'm currently on Oak Street heading towards your area.", time: "9:22 AM", read: true },
-    { id: 4, from: "me", text: "Perfect, I'll head downstairs now.", time: "9:25 AM", read: true },
-    { id: 5, from: "other", text: "I'm in a silver Tesla Model 3, license plate 7ABC123.", time: "9:27 AM", read: true },
-    { id: 6, from: "me", text: "Got it! I see you. Heading over now 👋", time: "9:30 AM", read: true },
-    { id: 7, from: "other", text: "I'll be at the pickup point in 5 min!", time: "9:32 AM", read: false },
-];
+const SOCKET_URL = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : 'http://localhost:5000';
 
 const Messages = () => {
-    const [activeChat, setActiveChat] = useState(conversations[0]);
+    const [conversations, setConversations] = useState<any[]>([]);
+    const [activeChat, setActiveChat] = useState<any>(null);
     const [newMsg, setNewMsg] = useState("");
-    const [msgs, setMsgs] = useState(messages);
-    const [search, setSearch] = useState("");
+    const [msgs, setMsgs] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [msgLoading, setMsgLoading] = useState(false);
+    const [me, setMe] = useState<any>(null);
+    const socketRef = useRef<Socket | null>(null);
 
-    const sendMessage = () => {
-        if (!newMsg.trim()) return;
-        setMsgs([...msgs, { id: msgs.length + 1, from: "me", text: newMsg, time: "Now", read: false }]);
-        setNewMsg("");
+    useEffect(() => {
+        const user = JSON.parse(localStorage.getItem('carpconnect_user') || '{}');
+        setMe(user);
+        fetchConversations();
+        
+        // Initialize Socket
+        const token = localStorage.getItem('carpconnect_token');
+        if (token) {
+            socketRef.current = io(SOCKET_URL, {
+                auth: { token },
+                transports: ["websocket"],
+            });
+            
+            socketRef.current.on('connect', () => {
+                console.log("Socket connected:", socketRef.current?.id);
+            });
+        }
+
+        return () => {
+            socketRef.current?.disconnect();
+        };
+    }, []);
+
+    useEffect(() => {
+        if (activeChat && socketRef.current) {
+            fetchMessages(activeChat._id);
+            socketRef.current.emit("join:chat", { bookingId: activeChat._id });
+
+            const handleNewMessage = (msg: any) => {
+                setMsgs(prev => {
+                    // Prevent duplicate messages
+                    if (prev.find(m => m._id === msg._id)) return prev;
+                    
+                    // Format message properly handling senderId based on backend payload
+                    const formattedMsg = {
+                        _id: msg._id || Date.now().toString(),
+                        content: msg.content,
+                        createdAt: msg.timestamp || new Date().toISOString(),
+                        sender: { _id: msg.senderId }
+                    };
+                    return [...prev, formattedMsg];
+                });
+            };
+
+            socketRef.current.on("chat:message", handleNewMessage);
+
+            return () => {
+                socketRef.current?.off("chat:message", handleNewMessage);
+                socketRef.current?.emit("leave:chat", { bookingId: activeChat._id });
+            };
+        }
+    }, [activeChat]);
+
+    const fetchConversations = async () => {
+        try {
+            // Bookings act as conversations
+            const res = await api.get("/bookings");
+            const bookings = res.data.data.bookings || [];
+            setConversations(bookings);
+            if (bookings.length > 0 && !activeChat) {
+                setActiveChat(bookings[0]);
+            }
+        } catch (err) {
+            console.error("Failed to fetch conversations:", err);
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const filteredConvos = conversations.filter((c) =>
-        c.name.toLowerCase().includes(search.toLowerCase())
-    );
+    const fetchMessages = async (bookingId: string, silent = false) => {
+        if (!silent) setMsgLoading(true);
+        try {
+            const res = await api.get(`/chat/${bookingId}`);
+            setMsgs(res.data.data.messages || []);
+        } catch (err) {
+            console.error("Failed to fetch messages:", err);
+        } finally {
+            if (!silent) setMsgLoading(false);
+        }
+    };
+
+    const sendMessage = async () => {
+        if (!newMsg.trim() || !activeChat) return;
+        const text = newMsg;
+        setNewMsg("");
+
+        if (socketRef.current?.connected) {
+            socketRef.current.emit("chat:send", {
+                bookingId: activeChat._id,
+                content: text
+            });
+        } else {
+            try {
+                const res = await api.post("/chat", {
+                    bookingId: activeChat._id,
+                    content: text
+                });
+                if (res.data?.data?.message) {
+                    setMsgs(prev => [...prev, res.data.data.message]);
+                } else {
+                    fetchMessages(activeChat._id, true);
+                }
+            } catch (err) {
+                toast.error("Failed to send message.");
+            }
+        }
+    };
+
+    const deleteMessage = async (msgId: string) => {
+        try {
+            const res = await api.delete(`/chat/${msgId}`);
+            if (res.data.success) {
+                setMsgs(prev => prev.filter(m => m._id !== msgId));
+            }
+        } catch (err) {
+            console.error("Failed to delete message:", err);
+        }
+    };
+
+    // ── ALL hooks must be declared before any early return ──
+    const bottomRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [msgs]);
+
+    const getPartner = (convo: any) => {
+        if (!convo || !me) return null;
+        const driverId = convo.driver?._id || convo.driver;
+        const myId = me._id;
+        if (!driverId || !myId) return convo.driver || convo.rider || null;
+        return driverId.toString() === myId.toString() ? convo.rider : convo.driver;
+    };
+
+    if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+
 
     return (
         <div className="space-y-4">
-            <div>
-                <h2 className="text-2xl font-display font-bold text-foreground">Messages</h2>
-                <p className="text-sm text-muted-foreground mt-1">Chat with your drivers and co-riders</p>
-            </div>
-
-            <div className="bg-card rounded-2xl border border-border/50 overflow-hidden" style={{ height: "calc(100vh - 200px)", minHeight: "580px" }}>
+            <div className="bg-card rounded-2xl border border-border/50 overflow-hidden" style={{ height: "calc(100vh - 180px)", minHeight: "500px" }}>
                 <div className="flex h-full">
                     {/* Sidebar */}
                     <div className="w-72 border-r border-border flex flex-col shrink-0">
-                        <div className="p-4 border-b border-border">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                                <input
-                                    type="text"
-                                    placeholder="Search conversations..."
-                                    value={search}
-                                    onChange={(e) => setSearch(e.target.value)}
-                                    className="w-full bg-muted rounded-xl pl-10 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                                />
-                            </div>
-                        </div>
+                        <div className="p-4 border-b border-border font-bold text-lg">Chats</div>
                         <div className="flex-1 overflow-y-auto">
-                            {filteredConvos.map((convo) => (
-                                <button
-                                    key={convo.id}
-                                    onClick={() => setActiveChat(convo)}
-                                    className={`w-full flex items-start gap-3 p-4 text-left hover:bg-muted/50 transition-colors border-b border-border/50 ${activeChat.id === convo.id ? "bg-primary/5 border-primary/10" : ""
-                                        }`}
-                                >
-                                    <div className="relative shrink-0">
-                                        <div className="w-11 h-11 rounded-full bg-gradient-primary flex items-center justify-center text-white text-sm font-bold">
-                                            {convo.avatar}
+                            {conversations.length > 0 ? conversations.map((convo) => {
+                                const partner = getPartner(convo);
+                                return (
+                                    <button
+                                        key={convo._id}
+                                        onClick={() => setActiveChat(convo)}
+                                        className={`w-full flex items-start gap-3 p-4 text-left hover:bg-muted/50 transition-colors border-b border-border/50 ${activeChat?._id === convo._id ? "bg-primary/5 border-primary/10" : ""}`}
+                                    >
+                                        <div className="shrink-0 w-11 h-11 rounded-full bg-gradient-primary flex items-center justify-center text-white text-sm font-bold">
+                                            {partner?.avatar ? <img src={partner.avatar} className="w-full h-full object-cover rounded-full" /> : partner?.name?.[0]}
                                         </div>
-                                        {convo.online && (
-                                            <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald rounded-full border-2 border-card" />
-                                        )}
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center justify-between mb-0.5">
-                                            <span className="text-sm font-semibold text-foreground truncate">{convo.name}</span>
-                                            <span className="text-[10px] text-muted-foreground shrink-0 ml-2">{convo.time}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-semibold truncate">{partner?.name}</div>
+                                            <div className="text-[10px] text-primary font-medium">{convo.offer?.origin?.address?.split(',')[0] || 'CarpConnect'} ride</div>
                                         </div>
-                                        <span className="text-[10px] text-primary font-medium">{convo.role}</span>
-                                        <div className="flex items-center justify-between mt-0.5">
-                                            <span className="text-xs text-muted-foreground truncate max-w-[140px]">{convo.lastMsg}</span>
-                                            {convo.unread > 0 && (
-                                                <span className="ml-1 w-5 h-5 rounded-full bg-primary text-white text-[10px] flex items-center justify-center shrink-0">
-                                                    {convo.unread}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </button>
-                            ))}
+                                    </button>
+                                );
+                            }) : (
+                                <div className="p-10 text-center text-muted-foreground text-sm">No conversations found.</div>
+                            )}
                         </div>
                     </div>
 
                     {/* Chat Area */}
                     <div className="flex-1 flex flex-col">
-                        {/* Chat header */}
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-                            <div className="flex items-center gap-3">
-                                <div className="relative">
-                                    <div className="w-10 h-10 rounded-full bg-gradient-primary flex items-center justify-center text-white text-sm font-bold">
-                                        {activeChat.avatar}
-                                    </div>
-                                    {activeChat.online && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald rounded-full border-2 border-card" />}
-                                </div>
-                                <div>
-                                    <div className="font-semibold text-foreground text-sm">{activeChat.name}</div>
-                                    <div className="text-xs text-muted-foreground">{activeChat.online ? "Active now" : "Offline"} · {activeChat.role}</div>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <button className="w-9 h-9 rounded-xl hover:bg-muted flex items-center justify-center transition-colors">
-                                    <Phone className="w-4 h-4 text-muted-foreground" />
-                                </button>
-                                <button className="w-9 h-9 rounded-xl hover:bg-muted flex items-center justify-center transition-colors">
-                                    <Video className="w-4 h-4 text-muted-foreground" />
-                                </button>
-                                <button className="w-9 h-9 rounded-xl hover:bg-muted flex items-center justify-center transition-colors">
-                                    <MoreVertical className="w-4 h-4 text-muted-foreground" />
-                                </button>
-                            </div>
-                        </div>
-
-                        {/* Messages */}
-                        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                            {msgs.map((msg, i) => (
-                                <motion.div
-                                    key={msg.id}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: i * 0.04 }}
-                                    className={`flex ${msg.from === "me" ? "justify-end" : "justify-start"}`}
-                                >
-                                    {msg.from !== "me" && (
-                                        <div className="w-8 h-8 rounded-full bg-gradient-primary flex items-center justify-center text-white text-xs font-bold mr-2 mt-auto shrink-0">
-                                            {activeChat.avatar}
+                        {activeChat ? (
+                            <>
+                                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-gradient-primary flex items-center justify-center text-white text-sm font-bold">
+                                            {getPartner(activeChat)?.avatar ? <img src={getPartner(activeChat).avatar} className="w-full h-full object-cover rounded-full" /> : getPartner(activeChat)?.name?.[0]}
                                         </div>
-                                    )}
-                                    <div className={`max-w-[70%] ${msg.from === "me" ? "items-end" : "items-start"} flex flex-col gap-1`}>
-                                        <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed ${msg.from === "me"
-                                                ? "bg-gradient-primary text-white rounded-br-sm"
-                                                : "bg-muted text-foreground rounded-bl-sm"
-                                            }`}>
-                                            {msg.text}
-                                        </div>
-                                        <div className="flex items-center gap-1 px-1">
-                                            <span className="text-[10px] text-muted-foreground">{msg.time}</span>
-                                            {msg.from === "me" && (
-                                                msg.read
-                                                    ? <CheckCheck className="w-3 h-3 text-primary" />
-                                                    : <Check className="w-3 h-3 text-muted-foreground" />
-                                            )}
+                                        <div>
+                                            <div className="font-semibold text-sm">{getPartner(activeChat).name}</div>
+                                            <div className="text-xs text-muted-foreground">Ride Booking #{activeChat._id.slice(-6)}</div>
                                         </div>
                                     </div>
-                                </motion.div>
-                            ))}
-                        </div>
+                                </div>
 
-                        {/* Input */}
-                        <div className="px-6 py-4 border-t border-border">
-                            <div className="flex items-center gap-3">
-                                <input
-                                    type="text"
-                                    placeholder="Type a message..."
-                                    value={newMsg}
-                                    onChange={(e) => setNewMsg(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-                                    className="flex-1 bg-muted rounded-xl px-5 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-                                />
-                                <button
-                                    onClick={sendMessage}
-                                    className="w-11 h-11 rounded-xl bg-gradient-primary flex items-center justify-center shadow-glow hover:opacity-90 transition-opacity shrink-0"
-                                >
-                                    <Send className="w-4 h-4 text-white" />
-                                </button>
+                                <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-muted/5">
+                                    {msgs.map((msg, i) => (
+                                        <div key={msg._id} className={`flex ${msg.sender?._id === me?._id ? "justify-end" : "justify-start"} group`}>
+                                            <div className="flex items-center gap-2">
+                                                {msg.sender?._id === me?._id && (
+                                                    <button onClick={() => deleteMessage(msg._id)} className="opacity-0 group-hover:opacity-100 p-2 text-red-500 hover:bg-red-500/10 rounded-full transition-all" title="Delete message">
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                )}
+                                                <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm ${msg.sender?._id === me?._id ? "bg-primary text-white" : "bg-card border border-border text-foreground"}`}>
+                                                    {msg.content}
+                                                    <div className="text-[9px] mt-1 opacity-70 flex items-center justify-end gap-1">
+                                                        {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        {msg.sender?._id === me?._id && (
+                                                            msg.status === 'seen' ? <CheckCheck size={12} className="text-blue-300" /> :
+                                                            msg.status === 'delivered' ? <CheckCheck size={12} /> :
+                                                            <Check size={12} />
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {msgLoading && msgs.length === 0 && <div className="text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary" /></div>}
+                                    <div ref={bottomRef} />
+                                </div>
+
+                                <div className="px-6 py-4 border-t border-border bg-card">
+                                    <div className="flex items-center gap-3">
+                                        <input
+                                            type="text"
+                                            placeholder="Type a message..."
+                                            value={newMsg}
+                                            onChange={(e) => setNewMsg(e.target.value)}
+                                            onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                                            className="flex-1 bg-muted rounded-xl px-4 py-3 text-sm outline-none"
+                                        />
+                                        <Button onClick={sendMessage} className="h-12 w-12 p-0 bg-primary text-white rounded-xl shadow-glow">
+                                            <Send size={18} />
+                                        </Button>
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground opacity-30">
+                                <MessageSquare size={64} className="mb-4" />
+                                <p>Select a chat to start messaging</p>
                             </div>
-                        </div>
+                        )}
                     </div>
                 </div>
             </div>

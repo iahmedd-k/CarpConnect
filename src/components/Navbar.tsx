@@ -23,8 +23,20 @@ const Navbar = () => {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [user, setUser] = useState<any>(null);
   const location = useLocation();
   const isDark = location.pathname === "/" || location.pathname === "/login" || location.pathname === "/signup";
+
+  useEffect(() => {
+    const userData = localStorage.getItem("carpconnect_user");
+    if (userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch (e) {
+        console.error("Error parsing user data");
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -98,16 +110,31 @@ const Navbar = () => {
         </nav>
 
         <div className="hidden md:flex items-center gap-3">
-          <Link to="/login">
-            <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-              Log In
-            </Button>
-          </Link>
-          <Link to="/signup">
-            <Button size="sm" className="bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity">
-              Get Started
-            </Button>
-          </Link>
+          {user ? (
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-foreground">
+                Hi, {user.name?.split(' ')[0] || "User"}
+              </span>
+              <Link to={user.role === 'driver' ? '/driver-dashboard' : '/dashboard'}>
+                <Button size="sm" className="bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity">
+                  Dashboard
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            <>
+              <Link to="/login">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
+                  Log In
+                </Button>
+              </Link>
+              <Link to="/signup">
+                <Button size="sm" className="bg-gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity">
+                  Get Started
+                </Button>
+              </Link>
+            </>
+          )}
         </div>
 
         <button
@@ -154,12 +181,25 @@ const Navbar = () => {
                 )
               )}
               <div className="flex flex-col gap-2 pt-4 border-t border-border">
-                <Link to="/login" onClick={() => setMobileOpen(false)}>
-                  <Button variant="ghost" className="justify-start text-muted-foreground w-full">Log In</Button>
-                </Link>
-                <Link to="/signup" onClick={() => setMobileOpen(false)}>
-                  <Button className="bg-gradient-primary text-primary-foreground w-full">Get Started</Button>
-                </Link>
+                {user ? (
+                  <>
+                    <div className="text-sm font-medium text-foreground py-2 px-4">
+                      Logged in as {user.name || "User"}
+                    </div>
+                    <Link to={user.role === 'driver' ? '/driver-dashboard' : '/dashboard'} onClick={() => setMobileOpen(false)}>
+                      <Button className="bg-gradient-primary text-primary-foreground w-full">Dashboard</Button>
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <Link to="/login" onClick={() => setMobileOpen(false)}>
+                      <Button variant="ghost" className="justify-start text-muted-foreground w-full">Log In</Button>
+                    </Link>
+                    <Link to="/signup" onClick={() => setMobileOpen(false)}>
+                      <Button className="bg-gradient-primary text-primary-foreground w-full">Get Started</Button>
+                    </Link>
+                  </>
+                )}
               </div>
             </div>
           </motion.div>
