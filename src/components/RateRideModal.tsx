@@ -1,14 +1,18 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Star, X, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import api from "../lib/api";
 
-export const RateRideModal = ({ booking, onClose, onSuccess }: any) => {
+export const RateRideModal = ({ booking, targetUser, subjectLabel = "ride partner", onClose, onSuccess }: any) => {
     const [rating, setRating] = useState(0);
     const [hover, setHover] = useState(0);
     const [comment, setComment] = useState("");
     const [tags, setTags] = useState<string[]>([]);
     const [submitting, setSubmitting] = useState(false);
+    const resolvedTargetUser = useMemo(() => {
+        if (targetUser) return targetUser;
+        return booking?.driver || booking?.rider || null;
+    }, [booking, targetUser]);
 
     const availableTags = ["Smooth Ride", "On Time", "Clean Car", "Great Chat"];
 
@@ -23,8 +27,8 @@ export const RateRideModal = ({ booking, onClose, onSuccess }: any) => {
         setSubmitting(true);
         try {
             await api.post("/reviews", {
-                booking: booking._id,
-                to: booking.driver?._id || booking.driver,
+                bookingId: booking._id,
+                userId: resolvedTargetUser?._id || resolvedTargetUser,
                 rating,
                 comment,
                 tags
@@ -45,7 +49,7 @@ export const RateRideModal = ({ booking, onClose, onSuccess }: any) => {
                     <X className="w-5 h-5 text-muted-foreground" />
                 </button>
                 <h3 className="text-xl font-display font-bold mb-2">Rate your journey</h3>
-                <p className="text-sm text-muted-foreground mb-6">How was your ride with {booking?.driver?.name}?</p>
+                <p className="text-sm text-muted-foreground mb-6">How was your {subjectLabel} with {resolvedTargetUser?.name || "your ride partner"}?</p>
                 
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="flex justify-center gap-2 mb-4">
@@ -87,7 +91,7 @@ export const RateRideModal = ({ booking, onClose, onSuccess }: any) => {
 
                     <div>
                         <textarea
-                            placeholder="Share some optional feedback about your driver..."
+                            placeholder="Share some optional feedback..."
                             value={comment}
                             onChange={(e) => setComment(e.target.value)}
                             className="w-full bg-muted/30 border border-border rounded-xl px-4 py-3 text-sm focus:border-primary outline-none transition-all resize-none h-24"

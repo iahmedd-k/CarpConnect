@@ -22,6 +22,8 @@ import Messages from "./dashboard/Messages";
 import Community from "./dashboard/Community";
 import AccountSettings from "./dashboard/AccountSettings";
 import DriverProfile from "./dashboard/DriverProfile";
+import RiderRatings from "./dashboard/RiderRatings";
+import SubscriptionPage from "./dashboard/SubscriptionPage";
 import NotificationsPanel from "@/components/NotificationsPanel";
 import { AnimatePresence } from "framer-motion";
 
@@ -34,59 +36,84 @@ const navItems = [
     { id: "find", icon: Search, label: "Find Rides" },
     { id: "rides", icon: Car, label: "My Rides" },
     { id: "community", icon: Users, label: "Community" },
+    { id: "ratings", icon: Star, label: "Ratings" },
     { id: "emissions", icon: Leaf, label: "Emissions" },
     { id: "wallet", icon: Wallet, label: "Wallet" },
+    { id: "subscription", icon: Calendar, label: "Plans & Usage" },
     { id: "messages", icon: MessageSquare, label: "Messages" },
 ];
+const mobileNavItems = [...navItems, { id: "settings", icon: Settings, label: "Settings" }];
 
 /* ──────────── Overview component (API-driven) ──────────── */
-const Overview = ({ user }: { user: any }) => {
+const Overview = ({ user, onBookRide }: { user: any; onBookRide: () => void }) => {
     const [loading, setLoading] = useState(true);
+    const [, setProfile] = useState<any>(user);
     const [totalRides, setTotalRides] = useState(0);
+    const [activeRides, setActiveRides] = useState(0);
     const [totalSpent, setTotalSpent] = useState(0);
-    const [totalSavings, setTotalSavings] = useState(0);
+    const [averagePerRide, setAveragePerRide] = useState(0);
     const [co2Saved, setCo2Saved] = useState(0);
     const [rideHistory, setRideHistory] = useState<any[]>([]);
     const [weeklyData, setWeeklyData] = useState<any[]>(DAYS.map(d => ({ day: d, rides: 0 })));
     const [recentBookings, setRecentBookings] = useState<any[]>([]);
+    const [usage, setUsage] = useState<any>(null);
+    const [subscription, setSubscription] = useState<any>(null);
 
     useEffect(() => {
         const fetchDashboardData = async () => {
             try {
-                const [bookingsRes, spendingRes] = await Promise.all([
-                    api.get("/bookings").catch(() => ({ data: { data: { bookings: [] } } })),
-                    api.get("/bookings/spending").catch(() => ({ data: { data: { totalSpent: 0, totalSavings: 0, emissionsSaved: 0 } } })),
+                const [meRes, bookingsRes, spendingRes, emissionsRes] = await Promise.all([
+                    api.get("/auth/me").catch(() => ({ data: { data: { user } } })),
+                    api.get("/bookings?role=rider").catch(() => ({ data: { data: { bookings: [] } } })),
+                    api.get("/bookings/summary/spending").catch(() => ({ data: { data: { summary: {} } } })),
+                    api.get("/emissions/me").catch(() => ({ data: { data: { stats: {} } } })),
                 ]);
 
-                const bookings = bookingsRes.data?.data?.bookings || [];
-                const spendingData = spendingRes.data?.data || { totalSpent: 0, totalSavings: 0, emissionsSaved: 0 };
+                const refreshedUser = meRes.data?.data?.user || user;
+                setUsage(meRes.data?.data?.usage || null);
+                setSubscription(meRes.data?.data?.subscription || refreshedUser?.subscription || null);
+                setProfile(refreshedUser);
+                if (refreshedUser) {
+                    localStorage.setItem("carpconnect_user", JSON.stringify(refreshedUser));
+                }
+
+                const bookings = (bookingsRes.data?.data?.bookings || []).filter((booking: any) => !booking.hiddenForRider);
+                const spendingSummary = spendingRes.data?.data?.summary || {};
+                const emissionsStats = emissionsRes.data?.data?.stats || {};
+                const completedBookings = bookings.filter((b: any) => b.status === 'completed' && b.paymentStatus === 'processed');
+                const liveBookings = bookings.filter((b: any) => ["confirmed", "picked_up", "live"].includes(String(b.status || "")));
 
                 // KPI cards
-                setTotalRides(bookings.filter((b: any) => b.status === 'completed').length);
-                setTotalSpent(spendingData.totalSpent);
-                setTotalSavings(spendingData.totalSavings);
-                setCo2Saved(spendingData.emissionsSaved);
+                setTotalRides(Number(spendingSummary.totalRides || completedBookings.length || 0));
+                setActiveRides(liveBookings.length);
+                setTotalSpent(Number(spendingSummary.totalSpent || 0));
+                setAveragePerRide(Number(spendingSummary.averagePerRide || 0));
+                setCo2Saved(Number(emissionsStats.totalCo2SavedKg || spendingSummary.totalEmissionsSaved || 0));
 
                 // Build monthly history from real bookings
                 const monthMap: Record<string, { rides: number; saved: number }> = {};
                 bookings.forEach((b: any) => {
-                    const d = new Date(b.createdAt);
+                    const d = new Date(b.updatedAt || b.createdAt);
                     const mon = MONTHS[d.getMonth()];
                     if (!monthMap[mon]) monthMap[mon] = { rides: 0, saved: 0 };
-                    monthMap[mon].rides++;
-                    monthMap[mon].saved += b.fare?.totalAmount || 0;
+                    monthMap[mon].rides += b.status === 'completed' && b.paymentStatus === 'processed' ? 1 : 0;
+                    monthMap[mon].saved += b.status === 'completed' && b.paymentStatus === 'processed' ? (b.fare?.totalAmount || 0) : 0;
                 });
-                const last7 = MONTHS.slice(0, 7).map(m => ({ month: m, rides: monthMap[m]?.rides || 0, saved: monthMap[m]?.saved || 0 }));
-                setRideHistory(last7);
+                const now = new Date();
+                const last6Months = Array.from({ length: 6 }, (_, index) => {
+                    const d = new Date(now.getFullYear(), now.getMonth() - (5 - index), 1);
+                    const mon = MONTHS[d.getMonth()];
+                    return { month: mon, rides: monthMap[mon]?.rides || 0, saved: monthMap[mon]?.saved || 0 };
+                });
+                setRideHistory(last6Months);
 
                 // Build weekly from bookings this week
-                const now = new Date();
                 const startOfWeek = new Date(now);
                 startOfWeek.setDate(now.getDate() - now.getDay() + 1);
                 startOfWeek.setHours(0, 0, 0, 0);
                 const dayMap: Record<string, number> = {};
                 bookings.forEach((b: any) => {
-                    const d = new Date(b.createdAt);
+                    const d = new Date(b.updatedAt || b.createdAt);
                     if (d >= startOfWeek) {
                         const day = DAYS[d.getDay() === 0 ? 6 : d.getDay() - 1];
                         dayMap[day] = (dayMap[day] || 0) + 1;
@@ -95,8 +122,11 @@ const Overview = ({ user }: { user: any }) => {
                 setWeeklyData(DAYS.map(d => ({ day: d, rides: dayMap[d] || 0 })));
 
                 // Recent active bookings for matched rides section
-                const active = bookings.filter((b: any) => b.status === 'confirmed' || b.status === 'pending').slice(0, 5);
-                setRecentBookings(active);
+                const recent = bookings
+                    .filter((b: any) => !["cancelled", "rejected"].includes(String(b.status || "")))
+                    .sort((a: any, b: any) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime())
+                    .slice(0, 5);
+                setRecentBookings(recent);
             } catch (err) {
                 console.error("Failed to fetch dashboard data:", err);
             } finally {
@@ -127,12 +157,12 @@ const Overview = ({ user }: { user: any }) => {
     return (
     <div className="space-y-6">
         {/* KPI Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-                { icon: Car, label: "Total Rides", value: String(totalRides), change: `${totalRides}`, color: "text-primary" },
-                { icon: Wallet, label: "Total Spent", value: `PKR ${totalSpent.toLocaleString()}`, change: "", color: "text-white" },
-                { icon: Leaf, label: "You Saved", value: `PKR ${totalSavings.toLocaleString()}`, change: "", color: "text-emerald" },
-                { icon: Globe, label: "CO₂ Saved", value: `${co2Saved} kg`, change: "", color: "text-emerald" },
+                { icon: Car, label: "Completed Rides", value: String(totalRides), change: "Lifetime", color: "text-primary" },
+                { icon: Navigation, label: "Active Rides", value: String(activeRides), change: "In progress", color: "text-blue-500" },
+                { icon: Wallet, label: "Total Spent", value: `PKR ${totalSpent.toLocaleString()}`, change: `Avg PKR ${averagePerRide.toFixed(0)}/ride`, color: "text-white" },
+                { icon: Globe, label: "CO2 Saved", value: `${co2Saved.toFixed(2)} kg`, change: "Environmental impact", color: "text-emerald" },
             ].map((stat, i) => (
                 <motion.div
                     key={stat.label}
@@ -156,6 +186,40 @@ const Overview = ({ user }: { user: any }) => {
                 </motion.div>
             ))}
         </div>
+
+        {usage && (
+            <div className="bg-card rounded-2xl p-5 border border-border/50">
+                <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                    <div>
+                        <h3 className="font-display font-bold text-foreground">Plan Usage</h3>
+                        <p className="text-xs text-muted-foreground">
+                            Plan: {String(subscription?.plan || "free").toUpperCase()} · Monthly limits
+                        </p>
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {[
+                        { label: "Bookings", used: usage.bookingsUsed, limit: usage.bookingsLimit },
+                        { label: "Ride Requests", used: usage.rideRequestsUsed, limit: usage.rideRequestsLimit },
+                    ].map((item) => {
+                        const used = Number(item.used || 0);
+                        const limit = Math.max(1, Number(item.limit || 0));
+                        const pct = Math.min(100, Math.round((used / limit) * 100));
+                        return (
+                            <div key={item.label} className="rounded-xl bg-muted/20 border border-border/40 p-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{item.label}</p>
+                                    <p className="text-xs font-semibold text-foreground">{used}/{limit}</p>
+                                </div>
+                                <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                                    <div className={`h-full rounded-full ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        )}
 
         {/* Charts Row */}
         <div className="grid lg:grid-cols-3 gap-6">
@@ -254,7 +318,7 @@ const Overview = ({ user }: { user: any }) => {
             >
                 <div className="flex items-center justify-between mb-5">
                     <h3 className="font-display font-bold text-foreground">Recent Bookings</h3>
-                    <Button size="sm" className="bg-primary text-white text-xs shadow-glow hover:bg-primary/90 rounded-xl">+ Book Ride</Button>
+                    <Button onClick={onBookRide} size="sm" className="bg-primary text-white text-xs shadow-glow hover:bg-primary/90 rounded-xl">+ Book Ride</Button>
                 </div>
                 <div className="space-y-3 max-h-[160px] overflow-y-auto custom-scrollbar pr-2">
                     {recentBookings.length === 0 ? (
@@ -287,11 +351,18 @@ const Overview = ({ user }: { user: any }) => {
 };
 
 const Dashboard = () => {
-    const [searchParams] = useSearchParams();
-    const [activeTab, setActiveTab] = useState("overview");
+    const [searchParams, setSearchParams] = useSearchParams();
+    const tabParam = searchParams.get("tab");
+    const [activeTab, setActiveTab] = useState(tabParam || "overview");
     const [initialQuery, setInitialQuery] = useState("");
     const [user, setUser] = useState<any>(null);
     const [notificationsOpen, setNotificationsOpen] = useState(false);
+
+    useEffect(() => {
+        if (tabParam && tabParam !== activeTab) {
+            setActiveTab(tabParam);
+        }
+    }, [tabParam]);
 
     useEffect(() => {
         const storedUser = localStorage.getItem("carpconnect_user");
@@ -306,21 +377,32 @@ const Dashboard = () => {
         }
     }, []);
 
+    const handleTabChange = (tab: string) => {
+        setActiveTab(tab);
+        setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("tab", tab);
+            return next;
+        });
+    };
+
     const renderContent = () => {
         switch (activeTab) {
-            case "find": return <FindRide initialQuery={initialQuery} onViewProfile={(id) => setActiveTab(`profile:${id}`)} />;
+            case "find": return <FindRide initialQuery={initialQuery} onViewProfile={(id) => handleTabChange(`profile:${id}`)} />;
             case "rides": return <MyRides />;
             case "emissions": return <Emissions />;
             case "wallet": return <WalletPage />;
+            case "subscription": return <SubscriptionPage />;
             case "messages": return <Messages />;
             case "community": return <Community />;
+            case "ratings": return <RiderRatings />;
             case "settings": return <AccountSettings />;
             default:
                 if (activeTab.startsWith("profile:")) {
                     const driverId = activeTab.split("profile:")[1];
-                    return <DriverProfile driverId={driverId} onBack={() => setActiveTab("find")} />;
+                    return <DriverProfile driverId={driverId} onBack={() => handleTabChange("find")} />;
                 }
-                return <Overview user={user} />;
+                return <Overview user={user} onBookRide={() => handleTabChange("find")} />;
         }
     };
 
@@ -333,7 +415,7 @@ const Dashboard = () => {
     const initials = user?.name ? user.name.split(' ').map((n: string) => n[0]).join('').toUpperCase() : "CC";
 
     return (
-        <div className="min-h-screen bg-muted/10">
+        <div className="min-h-screen bg-muted/10 overflow-x-hidden">
             {/* Sidebar */}
             <aside className="fixed left-0 top-0 bottom-0 w-64 bg-[#0a0a0c] flex flex-col z-40 hidden lg:flex border-r border-white/5">
                 <div className="p-6 border-b border-white/5">
@@ -364,7 +446,7 @@ const Dashboard = () => {
                     {navItems.map((item) => (
                         <button
                             key={item.id}
-                            onClick={() => setActiveTab(item.id)}
+                            onClick={() => handleTabChange(item.id)}
                             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all group ${activeTab === item.id
                                 ? "bg-primary text-white shadow-glow-primary"
                                 : "text-muted-foreground hover:bg-white/5 hover:text-white"
@@ -378,7 +460,7 @@ const Dashboard = () => {
 
                 <div className="p-4 border-t border-white/5 space-y-1">
                     <button
-                        onClick={() => setActiveTab('settings')}
+                        onClick={() => handleTabChange('settings')}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${activeTab === 'settings' ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-white/5 hover:text-white'}`}
                     >
                         <Settings className="w-4 h-4" /> Settings
@@ -390,25 +472,27 @@ const Dashboard = () => {
             </aside>
 
             {/* Mobile bottom nav */}
-            <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0a0a0c]/80 backdrop-blur-xl border-t border-white/10 px-2 py-2 flex items-center justify-around">
-                {navItems.slice(0, 5).map((item) => (
+            <div className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0a0a0c]/90 backdrop-blur-xl border-t border-white/10 px-2 py-2">
+                <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                {mobileNavItems.map((item) => (
                     <button
                         key={item.id}
-                        onClick={() => setActiveTab(item.id)}
-                        className={`flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${activeTab === item.id ? "text-primary" : "text-muted-foreground"}`}
+                        onClick={() => handleTabChange(item.id)}
+                        className={`flex shrink-0 flex-col items-center gap-1 min-w-[74px] px-3 py-2 rounded-xl transition-all ${activeTab === item.id ? "text-primary bg-primary/10" : "text-muted-foreground"}`}
                     >
-                        <item.icon className="w-5 h-5" />
-                        <span className="text-[10px] font-bold">{item.label}</span>
+                        <item.icon className="w-4 h-4" />
+                        <span className="text-[10px] font-bold leading-tight text-center">{item.label}</span>
                     </button>
                 ))}
+                </div>
             </div>
 
             {/* Main */}
-            <main className="lg:ml-64 min-h-screen pb-24 lg:pb-0">
+            <main className="lg:ml-64 min-h-screen pb-28 lg:pb-0">
                 {/* Header */}
-                <div className="sticky top-0 z-30 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4 flex items-center justify-between">
-                    <div>
-                        <h1 className="text-xl font-display font-bold text-foreground uppercase tracking-tight">
+                <div className="sticky top-0 z-30 bg-background/80 backdrop-blur-xl border-b border-border px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                        <h1 className="text-base sm:text-xl font-display font-bold text-foreground uppercase tracking-tight truncate">
                             {navItems.find((n) => n.id === activeTab)?.label ?? "Dashboard"}
                         </h1>
                     </div>
@@ -431,7 +515,7 @@ const Dashboard = () => {
                     </div>
                 </div>
 
-                <div className="p-4 md:p-6 lg:p-10 max-w-7xl mx-auto">
+                <div className="p-3 sm:p-4 md:p-6 lg:p-10 max-w-7xl mx-auto">
                     <motion.div
                         key={activeTab}
                         initial={{ opacity: 0, x: 10 }}

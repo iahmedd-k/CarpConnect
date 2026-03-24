@@ -1,13 +1,16 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Wallet, ArrowUpRight, TrendingUp, Calendar, CreditCard, DollarSign, Download, ArrowRightLeft, Loader2 } from "lucide-react";
+import { Wallet, TrendingUp, Calendar, CreditCard, Download, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import api from "../../lib/api";
+import { toast } from "sonner";
+import { currentPlanFromStorage, hasPlanAtLeast } from "@/lib/planAccess";
 
 const DriverEarnings = () => {
     const [loading, setLoading] = useState(true);
     const [earnings, setEarnings] = useState<any>(null);
     const [timeFilter, setTimeFilter] = useState<"all" | "today" | "week" | "month">("all");
+    const [usage, setUsage] = useState<any>(null);
 
     useEffect(() => {
         fetchEarnings();
@@ -16,7 +19,7 @@ const DriverEarnings = () => {
     const fetchEarnings = async () => {
         try {
             setLoading(true);
-            let url = "/bookings/earnings";
+            let url = "/bookings/summary/earnings";
             const now = new Date();
             let startDate = "";
 
@@ -38,8 +41,13 @@ const DriverEarnings = () => {
                 url += `?startDate=${startDate}`;
             }
 
-            const res = await api.get(url);
-            setEarnings(res.data.data);
+            const [summaryRes, meRes] = await Promise.all([
+                api.get(url),
+                api.get("/auth/me").catch(() => ({ data: { success: false, data: {} } })),
+            ]);
+
+            setEarnings(summaryRes.data.data?.summary || {});
+            setUsage(meRes.data?.data?.usage || null);
         } catch (err) {
             console.error("Failed to fetch earnings:", err);
         } finally {
@@ -48,27 +56,64 @@ const DriverEarnings = () => {
     };
 
     if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>;
+    const currentPlan = currentPlanFromStorage();
+    const canUseDetailed = hasPlanAtLeast(currentPlan, "plus");
 
-    const data = earnings || { totalBalance: 0, totalRides: 0, transactions: [] };
+    const data = earnings || { totalBalance: 0, totalRides: 0, transactions: [], totalEarnings: 0, platformFees: 0, averagePerRide: 0 };
+
+    const exportTransactions = () => {
+        if (!data.transactions?.length) {
+            toast.info("No earnings to export");
+            return;
+        }
+
+        const rows = data.transactions.map((trx: any) => ({
+            date: new Date(trx.date).toISOString(),
+            rider: trx.riderName || "",
+            status: trx.status || "",
+            amount: trx.amount || 0,
+            currency: trx.currency || "PKR"
+        }));
+
+        const header = Object.keys(rows[0]).join(",");
+        const csv = [
+            header,
+            ...rows.map((r: any) => Object.values(r).map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")),
+        ].join("\n");
+
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `driver-earnings-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast.success("Earnings exported");
+    };
 
     return (
         <div className="space-y-6 max-w-5xl mx-auto">
             {/* Header & Filter */}
             <div className="flex items-center justify-between flex-wrap gap-4">
                 <h2 className="text-2xl font-display font-bold text-foreground">Earnings</h2>
-                <div className="flex gap-1 p-1 bg-muted/20 rounded-xl border border-border/50">
-                    {(["all", "today", "week", "month"] as const).map((tf) => (
-                        <button
-                            key={tf}
-                            onClick={() => setTimeFilter(tf)}
-                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${timeFilter === tf
-                                ? "bg-card text-primary shadow-sm"
-                                : "text-muted-foreground hover:text-foreground"
-                                }`}
-                        >
-                            {tf}
-                        </button>
-                    ))}
+                <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex gap-1 p-1 bg-muted/20 rounded-xl border border-border/50">
+                        {(["all", "today", "week", "month"] as const).map((tf) => (
+                            <button
+                                key={tf}
+                                onClick={() => setTimeFilter(tf)}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${timeFilter === tf
+                                    ? "bg-card text-primary shadow-sm"
+                                    : "text-muted-foreground hover:text-foreground"
+                                    }`}
+                            >
+                                {tf}
+                            </button>
+                        ))}
+                    </div>
+                    <Button onClick={exportTransactions} variant="outline" className="gap-2" disabled={!canUseDetailed}>
+                        <Download className="w-4 h-4" /> Export
+                    </Button>
                 </div>
             </div>
 
@@ -91,9 +136,6 @@ const DriverEarnings = () => {
                         <div className="text-emerald-100 text-xs font-medium">Platform Fee (10%): PKR {(data.platformFees || 0).toLocaleString()}</div>
                     </div>
 
-                    <Button className="w-full mt-6 bg-white text-emerald-800 hover:bg-emerald-50 font-bold shadow-sm relative z-10">
-                        Withdraw to Bank <ArrowUpRight className="ml-2 w-4 h-4" />
-                    </Button>
                 </motion.div>
 
                 <motion.div
@@ -128,18 +170,54 @@ const DriverEarnings = () => {
                         <div className="w-10 h-10 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-500">
                             <CreditCard className="w-5 h-5" />
                         </div>
-                        <span className="text-xs text-muted-foreground font-semibold">Stripe Connected</span>
+                        <span className="text-xs text-muted-foreground font-semibold">Payout Summary</span>
                     </div>
                     <div>
-                        <div className="text-lg font-bold text-foreground mb-1">HBL Account ****4921</div>
+                        <div className="text-lg font-bold text-foreground mb-1">Gross PKR {Number(data.totalEarnings || 0).toLocaleString()}</div>
                         <div className="flex items-center gap-2 text-sm text-emerald">
-                            <span className="flex items-center gap-1 text-xs font-bold"><CheckCircleIcon className="w-3 h-3" /> Verified Identity</span>
+                            <span className="flex items-center gap-1 text-xs font-bold"><CheckCircleIcon className="w-3 h-3" /> Avg PKR {Number(data.averagePerRide || 0).toFixed(0)} / ride</span>
                         </div>
                     </div>
                 </motion.div>
             </div>
 
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.22 }}
+                className="bg-card border border-border/50 rounded-3xl p-6 shadow-sm"
+            >
+                <div className="flex items-center justify-between gap-4 mb-4">
+                    <div>
+                        <h3 className="font-display font-bold text-xl">Subscription Usage Limits</h3>
+                        <p className="text-xs text-muted-foreground">Monthly platform usage by your active plan</p>
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-primary/10 text-primary">
+                        {usage?.monthKey || "Current Month"}
+                    </span>
+                </div>
+
+                <div className="grid md:grid-cols-3 gap-3 text-xs">
+                    <div className="rounded-2xl border border-border/50 p-4 bg-muted/20">
+                        <p className="font-bold text-muted-foreground uppercase tracking-wider mb-1">Ride Offers</p>
+                        <p className="text-base font-bold text-foreground">{usage?.rideOffersUsed || 0} / {usage?.rideOffersLimit ?? "—"}</p>
+                        <p className="text-muted-foreground mt-1">{usage?.rideOffersRemaining ?? 0} remaining</p>
+                    </div>
+                    <div className="rounded-2xl border border-border/50 p-4 bg-muted/20">
+                        <p className="font-bold text-muted-foreground uppercase tracking-wider mb-1">Bookings</p>
+                        <p className="text-base font-bold text-foreground">{usage?.bookingsUsed || 0} / {usage?.bookingsLimit ?? "—"}</p>
+                        <p className="text-muted-foreground mt-1">{usage?.bookingsRemaining ?? 0} remaining</p>
+                    </div>
+                    <div className="rounded-2xl border border-border/50 p-4 bg-muted/20">
+                        <p className="font-bold text-muted-foreground uppercase tracking-wider mb-1">Ride Requests</p>
+                        <p className="text-base font-bold text-foreground">{usage?.rideRequestsUsed || 0} / {usage?.rideRequestsLimit ?? "—"}</p>
+                        <p className="text-muted-foreground mt-1">{usage?.rideRequestsRemaining ?? 0} remaining</p>
+                    </div>
+                </div>
+            </motion.div>
+
             {/* Transactions Table */}
+            {canUseDetailed ? (
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -187,6 +265,20 @@ const DriverEarnings = () => {
                     </table>
                 </div>
             </motion.div>
+            ) : (
+            <div className="bg-card border border-amber-300/60 rounded-3xl p-6 shadow-sm">
+                <h3 className="font-display font-bold text-xl flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-500" />
+                    Detailed Earnings Ledger (Locked)
+                </h3>
+                <p className="text-xs text-muted-foreground mt-1">
+                    Transaction-level earnings history and export are available on Plus and Pro.
+                </p>
+                <Button className="mt-4 bg-primary text-white" onClick={() => (window.location.href = "/driver-dashboard?tab=subscription")}>
+                    Upgrade to Plus
+                </Button>
+            </div>
+            )}
         </div>
     );
 };

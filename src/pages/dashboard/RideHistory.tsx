@@ -3,15 +3,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     Car, MapPin, Clock, Loader2, CheckCircle2, XCircle,
     Navigation, ChevronDown, ChevronUp, Search, RefreshCw,
-    AlertCircle, Eye, X, Users, Wallet
+    AlertCircle, Eye, X, Users, Wallet, Trash2, Lock
 } from "lucide-react";
 import api from "../../lib/api";
 import { toast } from "sonner";
+import { normalizeOfferStatus } from "@/lib/rideStatus";
+import { currentPlanFromStorage, hasPlanAtLeast } from "@/lib/planAccess";
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUS: Record<string, { label: string; cls: string; icon: React.ElementType }> = {
-    scheduled:  { label: "Scheduled",  cls: "bg-blue-500/10 text-blue-400 border-blue-500/20",        icon: Clock },
-    live:       { label: "Live",       cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", icon: Navigation },
+    open:       { label: "Open",       cls: "bg-blue-500/10 text-blue-400 border-blue-500/20",        icon: Clock },
+    active:     { label: "Active",     cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20", icon: Navigation },
     completed:  { label: "Completed",  cls: "bg-muted/30 text-muted-foreground border-border",         icon: CheckCircle2 },
     cancelled:  { label: "Cancelled",  cls: "bg-red-500/10 text-red-400 border-red-500/20",            icon: XCircle },
 };
@@ -37,8 +39,25 @@ const fmt = {
     },
 };
 
+const getStoredDriverId = () => {
+    try {
+        const storedUser = JSON.parse(localStorage.getItem("carpconnect_user") || "{}");
+        return String(storedUser?._id || storedUser?.id || "");
+    } catch {
+        return "";
+    }
+};
+
+const getOfferDriverId = (offer: any) => String(
+    offer?.driverId?._id ||
+    offer?.driverId ||
+    offer?.driver?._id ||
+    offer?.driver ||
+    ""
+);
+
 function StatusBadge({ status }: { status: string }) {
-    const cfg = STATUS[status] || STATUS.cancelled;
+    const cfg = STATUS[normalizeOfferStatus(status)] || STATUS.cancelled;
     const Icon = cfg.icon;
     return (
         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${cfg.cls}`}>
@@ -128,57 +147,107 @@ const RideHistory = () => {
     const [sortAsc, setSortAsc] = useState(false);
     const [page, setPage] = useState(1);
     const [detail, setDetail] = useState<any>(null);
+    const currentPlan = currentPlanFromStorage();
+    const canUseHistory = hasPlanAtLeast(currentPlan, "plus");
 
     const PAGE_SIZE = 8;
 
     useEffect(() => { fetchData(); }, []);
 
+    const hideRide = async (offerId: string, bookings: any[] = []) => {
+        try {
+            const bookingIds = bookings
+                .map((booking: any) => booking?._id)
+                .filter(Boolean);
+
+            const results = await Promise.allSettled([
+                api.patch(`/history/rides/${offerId}/hide`),
+                ...bookingIds.map((bookingId: string) => api.patch(`/history/bookings/${bookingId}/hide`)),
+            ]);
+
+            const succeeded = results.some((result: any) => result.status === "fulfilled");
+            if (!succeeded) {
+                throw new Error("Failed to remove ride from history.");
+            }
+
+            setOffers(prev => prev.filter(o => o._id !== offerId));
+            setBookingsMap(prev => {
+                const next = { ...prev };
+                delete next[offerId];
+                return next;
+            });
+            toast.success("Ride removed from history view.");
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || "Failed to remove ride from history.");
+        }
+    };
+
+    const clearHistory = async () => {
+        try {
+            await Promise.all([
+                api.patch("/history/rides/clear"),
+                api.patch("/history/bookings/clear?role=driver"),
+            ]);
+            setOffers(prev => prev.filter(o => !["completed", "cancelled"].includes(o.status)));
+            setBookingsMap(prev => {
+                const next: Record<string, any[]> = {};
+                Object.entries(prev).forEach(([offerId, bookings]) => {
+                    const visible = bookings.filter((booking: any) => !["completed", "cancelled"].includes(booking.status));
+                    if (visible.length > 0) {
+                        next[offerId] = visible;
+                    }
+                });
+                return next;
+            });
+            toast.success("Driver history cleared from view.");
+        } catch (err: any) {
+            toast.error(err?.response?.data?.message || "Failed to clear ride history.");
+        }
+    };
+
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Fetch driver's bookings which contain offer data
-            const res = await api.get("/bookings");
-            const allBookings: any[] = res.data?.data?.bookings || [];
+            const driverId = getStoredDriverId();
+            const [offerRes, bookingRes] = await Promise.all([
+                api.get("/rides/offers/me"),
+                api.get("/bookings?role=driver"),
+            ]);
 
-            // Group bookings by offer ID; derive offer from booking
-            const offerGroups: Record<string, { offer: any; bookings: any[] }> = {};
-            allBookings.forEach(b => {
-                const offerId = b.offer?._id || b.offer;
-                if (!offerId) return;
-                if (!offerGroups[offerId]) {
-                    offerGroups[offerId] = { offer: b.offer || {}, bookings: [] };
+            const driverOffers: any[] = (offerRes.data?.data?.offers || []).filter((offer: any) => {
+                if (offer.hiddenForDriver) return false;
+                const ownerId = getOfferDriverId(offer);
+                return !driverId || !ownerId || ownerId === driverId;
+            });
+            const allBookings: any[] = (bookingRes.data?.data?.bookings || []).filter((booking: any) => !booking.hiddenForDriver);
+
+            const validOfferIds = new Set(
+                driverOffers
+                    .map((offer: any) => offer?._id)
+                    .filter(Boolean)
+            );
+
+            const bMap: Record<string, any[]> = {};
+            allBookings.forEach((booking: any) => {
+                const offerId = booking?.offer?._id || booking?.offerId || booking?.offer;
+                if (!offerId || !validOfferIds.has(offerId)) return;
+
+                if (!bMap[offerId]) {
+                    bMap[offerId] = [];
                 }
-                offerGroups[offerId].bookings.push(b);
+                bMap[offerId].push(booking);
             });
 
-            // Also try to fetch driver's own offers
-            try {
-                const offerRes = await api.get("/rides/offers");
-                const driverOffers: any[] = offerRes.data?.data?.offers || [];
-                driverOffers.forEach(o => {
-                    if (!offerGroups[o._id]) {
-                        offerGroups[o._id] = { offer: o, bookings: [] };
-                    } else {
-                        offerGroups[o._id].offer = { ...offerGroups[o._id].offer, ...o };
-                    }
-                });
-            } catch { /* driver offers endpoint may not exist yet */ }
-
-            const grouped = Object.values(offerGroups);
-            const offList = grouped.map(g => g.offer);
-            const bMap: Record<string, any[]> = {};
-            grouped.forEach(g => { if (g.offer?._id) bMap[g.offer._id] = g.bookings; });
-
-            setOffers(offList);
+            const normalizedOffers = driverOffers.map((offer: any) => ({
+                ...offer,
+                status: normalizeOfferStatus(offer.status),
+            }));
+            setOffers(normalizedOffers);
             setBookingsMap(bMap);
-        } catch (err) {
-            // Fallback: driver ride history endpoint
-            try {
-                const res2 = await api.get("/rides/history");
-                setOffers(res2.data?.data?.offers || []);
-            } catch {
-                toast.error("Failed to load ride history.");
-            }
+        } catch (err: any) {
+            setOffers([]);
+            setBookingsMap({});
+            toast.error(err?.response?.data?.message || "Failed to load your driver history.");
         } finally {
             setLoading(false);
         }
@@ -213,6 +282,46 @@ const RideHistory = () => {
 
     if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>;
 
+    if (!canUseHistory) {
+        return (
+            <div className="space-y-6 pb-10">
+                <div className="bg-card rounded-3xl border border-amber-300/60 p-6">
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                            <h2 className="text-2xl font-display font-bold text-foreground flex items-center gap-2">
+                                <Lock className="w-5 h-5 text-amber-500" />
+                                Ride History (Locked)
+                            </h2>
+                            <p className="text-sm text-muted-foreground mt-1">
+                                Booking history and detailed ride tracking are available on Plus and Pro.
+                            </p>
+                        </div>
+                        <button
+                            onClick={() => { window.location.href = "/driver-dashboard?tab=subscription"; }}
+                            className="rounded-xl bg-primary text-white px-4 py-2 text-xs font-bold uppercase tracking-wider hover:opacity-90"
+                        >
+                            Upgrade Plan
+                        </button>
+                    </div>
+                    <div className="mt-5 grid md:grid-cols-3 gap-3 text-xs">
+                        <div className="rounded-2xl border border-border/50 bg-muted/20 p-4">
+                            <p className="font-bold uppercase tracking-wider text-muted-foreground mb-1">Includes on Plus</p>
+                            <p className="text-foreground">Ride-by-ride history, search, filters, and status timelines.</p>
+                        </div>
+                        <div className="rounded-2xl border border-border/50 bg-muted/20 p-4">
+                            <p className="font-bold uppercase tracking-wider text-muted-foreground mb-1">Includes on Pro</p>
+                            <p className="text-foreground">History plus priority placement and deeper analytics views.</p>
+                        </div>
+                        <div className="rounded-2xl border border-border/50 bg-muted/20 p-4">
+                            <p className="font-bold uppercase tracking-wider text-muted-foreground mb-1">Current plan</p>
+                            <p className="text-foreground">{String(currentPlan).toUpperCase()}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6 pb-10">
             {/* Header */}
@@ -221,9 +330,14 @@ const RideHistory = () => {
                     <h2 className="text-2xl font-display font-bold">Ride History</h2>
                     <p className="text-sm text-muted-foreground mt-0.5">Your full journey record as a driver</p>
                 </div>
-                <button onClick={fetchData} className="flex items-center gap-2 text-sm text-primary hover:opacity-80 font-semibold transition-colors" id="history-refresh">
-                    <RefreshCw className="w-4 h-4" /> Refresh
-                </button>
+                <div className="flex gap-3">
+                    <button onClick={clearHistory} className="flex items-center gap-2 text-sm text-red-400 hover:opacity-80 font-semibold transition-colors">
+                        <Trash2 className="w-4 h-4" /> Clear History
+                    </button>
+                    <button onClick={fetchData} className="flex items-center gap-2 text-sm text-primary hover:opacity-80 font-semibold transition-colors" id="history-refresh">
+                        <RefreshCw className="w-4 h-4" /> Refresh
+                    </button>
+                </div>
             </div>
 
             {/* Summary KPIs */}
@@ -257,7 +371,7 @@ const RideHistory = () => {
                     />
                 </div>
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                    {["all", "scheduled", "live", "completed", "cancelled"].map(f => (
+                    {["all", "open", "active", "completed", "cancelled"].map(f => (
                         <button
                             key={f}
                             onClick={() => { setFilter(f); setPage(1); }}
@@ -366,19 +480,28 @@ const RideHistory = () => {
 
                                             {/* Status */}
                                             <td className="px-5 py-4">
-                                                <StatusBadge status={offer.status || "scheduled"} />
+                                                <StatusBadge status={offer.status || "open"} />
                                             </td>
 
                                             {/* Actions */}
                                             <td className="px-5 py-4">
-                                                <button
-                                                    onClick={() => setDetail({ offer, bookings: bkgs })}
-                                                    id={`detail-btn-${i}`}
-                                                    className="p-2 rounded-xl bg-muted/30 hover:bg-primary/10 hover:text-primary transition-all"
-                                                    title="View Details"
-                                                >
-                                                    <Eye className="w-3.5 h-3.5" />
-                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        onClick={() => setDetail({ offer, bookings: bkgs })}
+                                                        id={`detail-btn-${i}`}
+                                                        className="p-2 rounded-xl bg-muted/30 hover:bg-primary/10 hover:text-primary transition-all"
+                                                        title="View Details"
+                                                    >
+                                                        <Eye className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => hideRide(offer._id, bkgs)}
+                                                        className="p-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-all"
+                                                        title="Remove from history"
+                                                    >
+                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </div>
                                             </td>
                                         </motion.tr>
                                     );

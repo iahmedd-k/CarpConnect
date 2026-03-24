@@ -50,6 +50,11 @@ const Community = () => {
         }
     };
 
+    const scrollToDrivers = () => {
+        const el = document.getElementById("top-drivers-section");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+
     if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 text-primary animate-spin" /></div>;
     if (!data) return <div className="text-center py-20 text-muted-foreground">Failed to load community data</div>;
 
@@ -159,9 +164,9 @@ const Community = () => {
             >
                 <div className="flex items-center justify-between mb-4">
                     <h3 className="font-display font-bold text-foreground">Top Rated Drivers</h3>
-                    <button className="text-xs font-bold uppercase tracking-wider text-primary hover:text-primary/80 transition-colors">View All members</button>
+                    <button onClick={scrollToDrivers} className="text-xs font-bold uppercase tracking-wider text-primary hover:text-primary/80 transition-colors">View All members</button>
                 </div>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div id="top-drivers-section" className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {data.topDrivers?.map((driver: any, i: number) => (
                         <motion.div
                             key={driver._id}

@@ -22,7 +22,7 @@ const DriverRatings = () => {
         try {
             // Fetch reviews and profile in parallel
             const [reviewsRes, profileRes] = await Promise.all([
-                api.get(`/reviews/${userId}`),
+                api.get(`/reviews/user/${userId}`),
                 api.get('/auth/me')
             ]);
 

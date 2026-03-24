@@ -1,17 +1,22 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Wallet, ArrowUp, ArrowDown, CreditCard, TrendingUp, Download, Plus, Loader2 } from "lucide-react";
+import { Wallet, ArrowUp, ArrowDown, CreditCard, TrendingUp, Download, Plus, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
     AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar
 } from "recharts";
 import api from "../../lib/api";
+import { toast } from "sonner";
+import { currentPlanFromStorage, hasPlanAtLeast } from "@/lib/planAccess";
 
 const typeColors: Record<string, string> = {
     ride: "bg-primary/10 text-primary",
     refund: "bg-emerald-light text-emerald",
     topup: "bg-amber-light text-amber",
 };
+
+const isSuccessfulRidePayment = (booking: any) =>
+    booking?.status === "completed" && booking?.paymentStatus === "processed";
 
 const WalletPage = () => {
     const [loading, setLoading] = useState(true);
@@ -26,9 +31,17 @@ const WalletPage = () => {
 
     const fetchData = async () => {
         try {
-            const res = await api.get("/bookings");
-            if (res.data.success) {
-                setBookings(res.data.data.bookings || []);
+            const [meRes, bookingsRes] = await Promise.all([
+                api.get("/auth/me").catch(() => ({ data: { success: false, data: { user: null } } })),
+                api.get("/bookings?role=rider").catch(() => ({ data: { success: false, data: { bookings: [] } } })),
+            ]);
+            const refreshedUser = meRes.data?.data?.user || null;
+            if (refreshedUser) {
+                setUser(refreshedUser);
+                localStorage.setItem('carpconnect_user', JSON.stringify(refreshedUser));
+            }
+            if (bookingsRes.data.success) {
+                setBookings(bookingsRes.data.data.bookings || []);
             }
         } catch (err) {
             console.error("Failed to fetch wallet data:", err);
@@ -44,43 +57,107 @@ const WalletPage = () => {
             </div>
         );
     }
+    const currentPlan = currentPlanFromStorage();
+    const canUseDetailed = hasPlanAtLeast(currentPlan, "plus");
 
     // Process data for UI
-    const riderBookings = bookings.filter(b => (b.rider?._id || b.rider) === user?._id);
+    const riderBookings = bookings.filter(b =>
+        (b.rider?._id || b.rider || b.userId) === user?._id
+    );
     const totalSpent = riderBookings
-        .filter(b => b.paymentStatus === 'paid' || b.status === 'completed')
+        .filter(isSuccessfulRidePayment)
         .reduce((sum, b) => sum + (b.fare?.totalAmount || 0), 0);
 
     const monthStart = new Date();
     monthStart.setDate(1);
     const spentThisMonth = riderBookings
-        .filter(b => new Date(b.createdAt) >= monthStart && (b.paymentStatus === 'paid' || b.status === 'completed'))
+        .filter(b => new Date(b.createdAt) >= monthStart && isSuccessfulRidePayment(b))
         .reduce((sum, b) => sum + (b.fare?.totalAmount || 0), 0);
 
-    // Mock some chart data based on real history if possible, else simplified
-    const chartData = [
-        { month: "Jan", spent: 45, saved: 12 },
-        { month: "Feb", spent: 52, saved: 15 },
-        { month: "Mar", spent: Math.round(spentThisMonth / 100) || 28, saved: Math.round(spentThisMonth / 400) || 8 },
-    ];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const chartSeed = monthNames.map((month) => ({ month, spent: 0, saved: 0 }));
 
-    const weeklySpend = [
-        { week: "W1", amount: Math.round(spentThisMonth / 400) || 5 },
-        { week: "W2", amount: Math.round(spentThisMonth / 300) || 7 },
-        { week: "W3", amount: Math.round(spentThisMonth / 200) || 12 },
-        { week: "W4", amount: Math.round(spentThisMonth / 500) || 4 },
-    ];
+    riderBookings.filter(isSuccessfulRidePayment).forEach((b) => {
+        const amount = b.fare?.totalAmount || 0;
+        const date = new Date(b.createdAt);
+        if (Number.isNaN(date.getTime())) return;
+        const idx = date.getMonth();
+        chartSeed[idx].spent += amount;
+        chartSeed[idx].saved += Math.round(amount * 0.15);
+    });
+
+    const activeMonths = chartSeed.filter((m) => m.spent > 0 || m.saved > 0);
+    const chartData = activeMonths.length > 0 ? activeMonths : chartSeed.slice(new Date().getMonth() - 2 < 0 ? 0 : new Date().getMonth() - 2, new Date().getMonth() + 1);
+
+    const weeklySpend = [1, 2, 3, 4].map((weekNum) => {
+        const startDay = (weekNum - 1) * 7 + 1;
+        const endDay = weekNum === 4 ? 31 : weekNum * 7;
+        const amount = riderBookings
+            .filter((b) => {
+                const d = new Date(b.createdAt);
+                const sameMonth = d.getMonth() === monthStart.getMonth() && d.getFullYear() === monthStart.getFullYear();
+                return sameMonth && d.getDate() >= startDay && d.getDate() <= endDay && isSuccessfulRidePayment(b);
+            })
+            .reduce((sum, b) => sum + (b.fare?.totalAmount || 0), 0);
+
+        return { week: `W${weekNum}`, amount };
+    });
+
+    const co2ImpactKg = riderBookings.filter(isSuccessfulRidePayment).reduce((sum, b) => {
+        const distanceKm = Number(b?.offer?.estimatedDistanceKm ?? 0) || 0;
+        const seats = Number(b?.seatsRequested ?? 1) || 1;
+        return sum + (distanceKm * 0.192 * seats);
+    }, 0);
+
+    const exportTransactions = () => {
+        const successfulBookings = riderBookings.filter(isSuccessfulRidePayment);
+
+        if (successfulBookings.length === 0) {
+            toast.info("No transactions to export");
+            return;
+        }
+
+        const rows = successfulBookings.map((tx) => ({
+            date: new Date(tx.createdAt).toISOString(),
+            from: tx.offer?.origin?.address || "",
+            to: tx.offer?.destination?.address || "",
+            driver: tx.driver?.name || "",
+            status: tx.status || "",
+            currency: tx.fare?.currency || "PKR",
+            amount: tx.fare?.totalAmount || 0,
+        }));
+
+        const header = Object.keys(rows[0]).join(",");
+        const csv = [
+            header,
+            ...rows.map((r) => Object.values(r).map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")),
+        ].join("\n");
+
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `wallet-transactions-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+        toast.success("Transactions exported");
+    };
+
+    const handleAddFunds = () => {
+        fetchData();
+        toast.success("Wallet refreshed");
+    };
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex items-start sm:items-center justify-between gap-3 flex-wrap">
                 <div>
-                    <h2 className="text-2xl font-display font-bold text-foreground">Wallet</h2>
+                    <h2 className="text-xl sm:text-2xl font-display font-bold text-foreground">Wallet</h2>
                     <p className="text-sm text-muted-foreground mt-1">Manage your balance, spending, and savings</p>
                 </div>
-                <div className="flex gap-3">
-                    <Button variant="outline" className="gap-2"><Download className="w-4 h-4" /> Export</Button>
-                    <Button className="bg-gradient-primary text-white shadow-glow hover:opacity-90 gap-2"><Plus className="w-4 h-4" /> Add Funds</Button>
+                <div className="flex gap-2 sm:gap-3 flex-wrap w-full sm:w-auto">
+                    <Button onClick={exportTransactions} variant="outline" className="gap-2 w-full sm:w-auto"><Download className="w-4 h-4" /> Export</Button>
+                    <Button onClick={handleAddFunds} className="bg-gradient-primary text-white shadow-glow hover:opacity-90 gap-2 w-full sm:w-auto"><Plus className="w-4 h-4" /> Refresh Wallet</Button>
                 </div>
             </div>
 
@@ -88,15 +165,15 @@ const WalletPage = () => {
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="bg-gradient-primary rounded-3xl p-8 relative overflow-hidden"
+                className="bg-gradient-primary rounded-3xl p-5 sm:p-8 relative overflow-hidden"
             >
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-[80px]" />
                 <div className="absolute bottom-0 left-1/2 w-48 h-48 bg-white/5 rounded-full blur-[60px]" />
                 <div className="relative z-10">
-                    <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-start sm:items-center justify-between mb-6 sm:mb-8 gap-3">
                         <div>
                             <p className="text-white/60 text-sm mb-1">Total Lifetime Spent</p>
-                            <div className="text-5xl font-display font-bold text-white">
+                            <div className="text-2xl sm:text-4xl lg:text-5xl font-display font-bold text-white break-words">
                                 {riderBookings[0]?.fare?.currency || 'PKR'} {totalSpent.toLocaleString()}
                             </div>
                         </div>
@@ -104,10 +181,10 @@ const WalletPage = () => {
                             <Wallet className="w-7 h-7 text-white" />
                         </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                         {[
                             { label: "Total Spent", value: `${riderBookings[0]?.fare?.currency || 'PKR'} ${totalSpent.toLocaleString()}`, icon: ArrowDown },
-                            { label: "Co2 Impact", value: "84 kg", icon: TrendingUp },
+                            { label: "Co2 Impact", value: `${co2ImpactKg.toFixed(1)} kg`, icon: TrendingUp },
                             { label: "This Month", value: `${riderBookings[0]?.fare?.currency || 'PKR'} ${spentThisMonth.toLocaleString()}`, icon: CreditCard },
                         ].map((item) => (
                             <div key={item.label} className="bg-white/10 rounded-2xl p-4">
@@ -121,6 +198,7 @@ const WalletPage = () => {
             </motion.div>
 
             {/* Charts */}
+            {canUseDetailed ? (
             <div className="grid lg:grid-cols-2 gap-6">
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -171,8 +249,27 @@ const WalletPage = () => {
                     </ResponsiveContainer>
                 </motion.div>
             </div>
+            ) : (
+            <div className="rounded-2xl border border-amber-300/60 bg-card p-6">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                        <h3 className="font-display font-bold text-foreground flex items-center gap-2">
+                            <Lock className="w-4 h-4 text-amber-500" />
+                            Detailed Spending View (Locked)
+                        </h3>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            Monthly savings vs spend charts and weekly breakdown are available on Plus and Pro.
+                        </p>
+                    </div>
+                    <Button onClick={() => (window.location.href = "/dashboard?tab=subscription")} className="bg-primary text-white">
+                        Upgrade to Plus
+                    </Button>
+                </div>
+            </div>
+            )}
 
             {/* Transaction History */}
+            {canUseDetailed ? (
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -207,6 +304,14 @@ const WalletPage = () => {
                     )}
                 </div>
             </motion.div>
+            ) : (
+            <div className="rounded-2xl border border-border/50 bg-card p-6">
+                <p className="text-sm font-semibold text-foreground">Recent Trips & Transactions</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                    Locked on Free. Upgrade to Plus for booking history and detailed transaction tracking.
+                </p>
+            </div>
+            )}
         </div>
     );
 };

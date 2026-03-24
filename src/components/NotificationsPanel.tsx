@@ -45,14 +45,15 @@ const NotificationsPanel = ({ onClose }: { onClose: () => void }) => {
 
     const getIcon = (type: string) => {
         switch (type) {
-            case 'newBookingRequest':
-            case 'booking_request': return <AlertTriangle className="w-4 h-4 text-amber-500" />;
-            case 'bookingConfirmed':
-            case 'booking_confirmed': return <CheckCircle className="w-4 h-4 text-emerald" />;
-            case 'bookingRejected':
-            case 'bookingCanceled': return <XCircle className="w-4 h-4 text-red-500" />;
-            case 'ride_update': return <Info className="w-4 h-4 text-primary" />;
-            case 'message': return <MessageCircle className="w-4 h-4 text-blue-500" />;
+            case 'newMatch': return <AlertTriangle className="w-4 h-4 text-amber-500" />;
+            case 'bookingConfirmed': return <CheckCircle className="w-4 h-4 text-emerald" />;
+            case 'bookingCancelled': return <XCircle className="w-4 h-4 text-red-500" />;
+            case 'bookingUpdated':
+            case 'rideUpdated':
+            case 'locationUpdate': return <Info className="w-4 h-4 text-primary" />;
+            case 'chatMessage': return <MessageCircle className="w-4 h-4 text-blue-500" />;
+            case 'paymentFailed': return <XCircle className="w-4 h-4 text-red-500" />;
+            case 'paymentSuccess': return <CheckCircle className="w-4 h-4 text-emerald" />;
             default: return <Bell className="w-4 h-4 text-muted-foreground" />;
         }
     };

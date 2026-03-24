@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { User, Smartphone, Mail, Lock, CheckCircle, Loader2, Camera, Car, Music, Cigarette, Dog, Bell, ShieldCheck } from "lucide-react";
+import { User, Smartphone, Lock, CheckCircle, Loader2, Camera, Car, Music, Cigarette, Dog, Bell, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import api from "../../lib/api";
@@ -107,9 +107,9 @@ const AccountSettings = () => {
     }
 
     return (
-        <div className="max-w-4xl mx-auto space-y-8 pb-20">
+        <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-20">
             {/* Header */}
-            <div className="bg-card rounded-3xl p-8 border border-border/50 relative overflow-hidden">
+            <div className="bg-card rounded-3xl p-5 sm:p-8 border border-border/50 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full -mr-32 -mt-32 blur-3xl" />
                 <div className="flex flex-col md:flex-row gap-8 items-start relative z-10">
                     <div className="relative group">
@@ -121,9 +121,9 @@ const AccountSettings = () => {
                         </button>
                     </div>
                     <div className="flex-1 space-y-1">
-                        <h2 className="text-3xl font-display font-bold text-foreground">{user?.name}</h2>
+                        <h2 className="text-2xl sm:text-3xl font-display font-bold text-foreground break-words">{user?.name}</h2>
                         <p className="text-muted-foreground">{user?.email}</p>
-                        <div className="flex gap-2 mt-4">
+                        <div className="flex gap-2 mt-4 flex-wrap">
                             <span className="px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-bold uppercase tracking-wider">{user?.role}</span>
                             <span className="px-3 py-1 rounded-full bg-emerald/10 text-emerald text-xs font-bold uppercase tracking-wider">Verified</span>
                         </div>
@@ -131,11 +131,11 @@ const AccountSettings = () => {
                 </div>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-8">
+            <div className="grid md:grid-cols-2 gap-5 sm:gap-8">
                 {/* Profile Form */}
                 <form onSubmit={handleSaveProfile} className="space-y-8">
                     {/* Personal Information */}
-                    <div className="bg-card rounded-3xl p-8 border border-border/50 space-y-6">
+                    <div className="bg-card rounded-3xl p-5 sm:p-8 border border-border/50 space-y-6">
                         <div className="flex items-center gap-3 mb-2">
                             <User className="w-5 h-5 text-primary" />
                             <h3 className="text-xl font-display font-bold">Personal Info</h3>
@@ -159,7 +159,7 @@ const AccountSettings = () => {
                     </div>
 
                     {/* Ride Preferences */}
-                    <div className="bg-card rounded-3xl p-8 border border-border/50 space-y-6">
+                    <div className="bg-card rounded-3xl p-5 sm:p-8 border border-border/50 space-y-6">
                         <div className="flex items-center gap-3 mb-2">
                             <Music className="w-5 h-5 text-primary" />
                             <h3 className="text-xl font-display font-bold">Preferences</h3>
@@ -194,12 +194,12 @@ const AccountSettings = () => {
 
                     {/* Vehicle Details for Drivers */}
                     {(user?.role === 'driver' || user?.role === 'both') && (
-                        <div className="bg-card rounded-3xl p-8 border border-border/50 space-y-6">
+                        <div className="bg-card rounded-3xl p-5 sm:p-8 border border-border/50 space-y-6">
                             <div className="flex items-center gap-3 mb-2">
                                 <Car className="w-5 h-5 text-primary" />
                                 <h3 className="text-xl font-display font-bold">Vehicle Details</h3>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2"><label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Make</label><input value={vehicle.make} onChange={(e) => setVehicle({ ...vehicle, make: e.target.value })} className="w-full h-12 bg-muted/30 border border-border rounded-xl px-4 text-sm focus:border-primary outline-none transition-all" /></div>
                                 <div className="space-y-2"><label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Model</label><input value={vehicle.model} onChange={(e) => setVehicle({ ...vehicle, model: e.target.value })} className="w-full h-12 bg-muted/30 border border-border rounded-xl px-4 text-sm focus:border-primary outline-none transition-all" /></div>
                                 <div className="space-y-2"><label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Plate #</label><input value={vehicle.plateNumber} onChange={(e) => setVehicle({ ...vehicle, plateNumber: e.target.value })} className="w-full h-12 bg-muted/30 border border-border rounded-xl px-4 text-sm focus:border-primary outline-none transition-all" /></div>
@@ -216,6 +216,7 @@ const AccountSettings = () => {
                                     </select>
                                 </div>
                             </div>
+
                         </div>
                     )}
 
@@ -230,14 +231,14 @@ const AccountSettings = () => {
                 {/* Security Form */}
                 <div className="space-y-8">
                     {/* Security & Password */}
-                    <div className="bg-card rounded-3xl p-8 border border-border/50 space-y-6">
+                    <div className="bg-card rounded-3xl p-5 sm:p-8 border border-border/50 space-y-6">
                         <div className="flex items-center gap-3 mb-2">
                             <Lock className="w-5 h-5 text-primary" />
                             <h3 className="text-xl font-display font-bold">Security</h3>
                         </div>
 
                         {/* 2FA Toggle */}
-                        <div className="p-4 rounded-2xl bg-muted/20 border border-border flex items-center justify-between mb-6">
+                        <div className="p-4 rounded-2xl bg-muted/20 border border-border flex items-center justify-between gap-3 flex-wrap mb-6">
                             <div className="flex gap-3 items-center">
                                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex flex-col justify-center items-center text-primary"><ShieldCheck className="w-5 h-5" /></div>
                                 <div>
@@ -274,7 +275,7 @@ const AccountSettings = () => {
                     </div>
 
                     {/* Notifications Panel */}
-                    <div className="bg-card rounded-3xl p-8 border border-border/50 space-y-6">
+                    <div className="bg-card rounded-3xl p-5 sm:p-8 border border-border/50 space-y-6">
                         <div className="flex items-center gap-3 mb-2">
                             <Bell className="w-5 h-5 text-primary" />
                             <h3 className="text-xl font-display font-bold">Notifications</h3>

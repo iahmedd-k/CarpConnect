@@ -16,7 +16,7 @@ CarpConnect is a modern carpooling platform that connects drivers and riders on 
 - Platform metrics with interactive Recharts
 - Community testimonials
 - Sustainability impact tracker
-- Pricing tiers (Free, Pro, Driver Plus)
+- Pricing tiers (Free, Plus, Pro)
 - Animated phone app mockup
 - FAQ accordion
 - Newsletter-integrated professional footer

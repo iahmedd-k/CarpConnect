@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { MessageSquare, Send, Search, MoreVertical, Check, CheckCheck, Loader2, Trash2, X } from "lucide-react";
+import { MessageSquare, Send, Search, MoreVertical, Check, CheckCheck, Loader2, Trash2, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import api from "../../lib/api";
 import { io, Socket } from "socket.io-client";
@@ -8,6 +8,16 @@ import { toast } from "sonner";
 
 
 const SOCKET_URL = import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace('/api', '') : 'http://localhost:5000';
+
+const dedupeById = (items: any[]) => {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+        const key = String(item?._id || "");
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
 
 const Messages = () => {
     const [conversations, setConversations] = useState<any[]>([]);
@@ -49,17 +59,14 @@ const Messages = () => {
 
             const handleNewMessage = (msg: any) => {
                 setMsgs(prev => {
-                    // Prevent duplicate messages
-                    if (prev.find(m => m._id === msg._id)) return prev;
-                    
-                    // Format message properly handling senderId based on backend payload
                     const formattedMsg = {
                         _id: msg._id || Date.now().toString(),
                         content: msg.content,
-                        createdAt: msg.timestamp || new Date().toISOString(),
-                        sender: { _id: msg.senderId }
+                        createdAt: msg.timestamp || msg.createdAt || new Date().toISOString(),
+                        sender: msg.sender || { _id: msg.senderId },
+                        status: msg.status || "delivered",
                     };
-                    return [...prev, formattedMsg];
+                    return dedupeById([...prev, formattedMsg]);
                 });
             };
 
@@ -75,8 +82,10 @@ const Messages = () => {
     const fetchConversations = async () => {
         try {
             // Bookings act as conversations
-            const res = await api.get("/bookings");
-            const bookings = res.data.data.bookings || [];
+            const user = JSON.parse(localStorage.getItem('carpconnect_user') || '{}');
+            const role = user?.role === "driver" ? "driver" : user?.role === "rider" ? "rider" : "";
+            const res = await api.get(role ? `/bookings?role=${role}` : "/bookings");
+            const bookings = dedupeById(res.data?.data?.bookings || []);
             setConversations(bookings);
             if (bookings.length > 0 && !activeChat) {
                 setActiveChat(bookings[0]);
@@ -92,7 +101,7 @@ const Messages = () => {
         if (!silent) setMsgLoading(true);
         try {
             const res = await api.get(`/chat/${bookingId}`);
-            setMsgs(res.data.data.messages || []);
+            setMsgs(dedupeById(res.data?.data?.messages || []));
         } catch (err) {
             console.error("Failed to fetch messages:", err);
         } finally {
@@ -105,25 +114,18 @@ const Messages = () => {
         const text = newMsg;
         setNewMsg("");
 
-        if (socketRef.current?.connected) {
-            socketRef.current.emit("chat:send", {
+        try {
+            const res = await api.post("/chat", {
                 bookingId: activeChat._id,
                 content: text
             });
-        } else {
-            try {
-                const res = await api.post("/chat", {
-                    bookingId: activeChat._id,
-                    content: text
-                });
-                if (res.data?.data?.message) {
-                    setMsgs(prev => [...prev, res.data.data.message]);
-                } else {
-                    fetchMessages(activeChat._id, true);
-                }
-            } catch (err) {
-                toast.error("Failed to send message.");
+            if (res.data?.data?.message) {
+                setMsgs(prev => dedupeById([...prev, res.data.data.message]));
+            } else {
+                fetchMessages(activeChat._id, true);
             }
+        } catch (err) {
+            toast.error("Failed to send message.");
         }
     };
 
@@ -157,10 +159,10 @@ const Messages = () => {
 
     return (
         <div className="space-y-4">
-            <div className="bg-card rounded-2xl border border-border/50 overflow-hidden" style={{ height: "calc(100vh - 180px)", minHeight: "500px" }}>
-                <div className="flex h-full">
+            <div className="bg-card rounded-2xl border border-border/50 overflow-hidden" style={{ height: "calc(100vh - 170px)", minHeight: "420px" }}>
+                <div className="flex h-full flex-col md:flex-row">
                     {/* Sidebar */}
-                    <div className="w-72 border-r border-border flex flex-col shrink-0">
+                    <div className={`w-full md:w-72 border-r border-border flex flex-col shrink-0 ${activeChat ? "hidden md:flex" : "flex"}`}>
                         <div className="p-4 border-b border-border font-bold text-lg">Chats</div>
                         <div className="flex-1 overflow-y-auto">
                             {conversations.length > 0 ? conversations.map((convo) => {
@@ -187,11 +189,18 @@ const Messages = () => {
                     </div>
 
                     {/* Chat Area */}
-                    <div className="flex-1 flex flex-col">
+                    <div className={`${activeChat ? "flex" : "hidden md:flex"} flex-1 flex-col`}>
                         {activeChat ? (
                             <>
-                                <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+                                <div className="flex items-center justify-between px-4 md:px-6 py-4 border-b border-border">
                                     <div className="flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setActiveChat(null)}
+                                            className="md:hidden w-8 h-8 rounded-lg border border-border flex items-center justify-center"
+                                        >
+                                            <ArrowLeft className="w-4 h-4" />
+                                        </button>
                                         <div className="w-10 h-10 rounded-full bg-gradient-primary flex items-center justify-center text-white text-sm font-bold">
                                             {getPartner(activeChat)?.avatar ? <img src={getPartner(activeChat).avatar} className="w-full h-full object-cover rounded-full" /> : getPartner(activeChat)?.name?.[0]}
                                         </div>
@@ -202,7 +211,7 @@ const Messages = () => {
                                     </div>
                                 </div>
 
-                                <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-muted/5">
+                                <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 bg-muted/5">
                                     {msgs.map((msg, i) => (
                                         <div key={msg._id} className={`flex ${msg.sender?._id === me?._id ? "justify-end" : "justify-start"} group`}>
                                             <div className="flex items-center gap-2">
@@ -229,7 +238,7 @@ const Messages = () => {
                                     <div ref={bottomRef} />
                                 </div>
 
-                                <div className="px-6 py-4 border-t border-border bg-card">
+                                <div className="px-4 md:px-6 py-4 border-t border-border bg-card">
                                     <div className="flex items-center gap-3">
                                         <input
                                             type="text"

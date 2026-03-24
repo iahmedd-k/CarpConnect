@@ -4,6 +4,7 @@ import { Star, MapPin, Car, Shield, MessageSquare, Calendar, Award, Leaf, ArrowL
 import { Button } from "@/components/ui/button";
 import LeafletMap from "@/components/LeafletMap";
 import api from "../../lib/api";
+import { toast } from "sonner";
 
 interface DriverProfileProps {
     driverId: string;
@@ -24,7 +25,7 @@ const DriverProfile = ({ driverId, onBack }: DriverProfileProps) => {
         try {
             const [userRes, reviewsRes] = await Promise.all([
                 api.get(`/users/${driverId}/profile`).catch(() => null),
-                api.get(`/reviews/${driverId}`).catch(() => ({ data: { data: { reviews: [] } } })),
+                api.get(`/reviews/user/${driverId}`).catch(() => ({ data: { data: { reviews: [] } } })),
             ]);
 
             if (userRes?.data?.data?.user) {
@@ -80,6 +81,23 @@ const DriverProfile = ({ driverId, onBack }: DriverProfileProps) => {
         { icon: Leaf, label: "CO₂ Saved", value: `${driver.totalCo2SavedKg?.toFixed(0) || 0} kg`, color: "text-emerald" },
     ];
 
+    const handleMessageClick = () => {
+        toast.info("Open Messages from dashboard", {
+            description: "Chat is available when you and this driver share a booking.",
+        });
+        onBack();
+    };
+
+    const handleContactClick = () => {
+        if (driver?.phone) {
+            window.location.href = `tel:${driver.phone}`;
+            return;
+        }
+        toast.info("Phone number unavailable", {
+            description: "This driver has not shared a contact number.",
+        });
+    };
+
     return (
         <div className="space-y-6 pb-10">
             {/* Back button */}
@@ -123,10 +141,10 @@ const DriverProfile = ({ driverId, onBack }: DriverProfileProps) => {
                         </p>
                     </div>
                     <div className="flex gap-3">
-                        <Button variant="outline" className="rounded-xl gap-2">
+                        <Button onClick={handleMessageClick} variant="outline" className="rounded-xl gap-2">
                             <MessageSquare className="w-4 h-4" /> Message
                         </Button>
-                        <Button className="bg-gradient-primary text-white rounded-xl shadow-glow gap-2">
+                        <Button onClick={handleContactClick} className="bg-gradient-primary text-white rounded-xl shadow-glow gap-2">
                             <Phone className="w-4 h-4" /> Contact
                         </Button>
                     </div>

@@ -23,7 +23,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner position="top-right" closeButton richColors />
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <RealTimeNotifications />
         <ScrollToTop />
         <Routes>
@@ -34,7 +34,14 @@ const App = () => (
           <Route path="/contact" element={<Contact />} />
           <Route path="/vision" element={<Vision />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/driver-dashboard" element={<ProtectedRoute><DriverDashboard /></ProtectedRoute>} />
+          <Route
+            path="/driver-dashboard"
+            element={
+              <ProtectedRoute allowRoles={["driver", "both"]} redirectTo="/dashboard">
+                <DriverDashboard />
+              </ProtectedRoute>
+            }
+          />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

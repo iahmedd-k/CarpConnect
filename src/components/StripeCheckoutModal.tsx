@@ -3,11 +3,12 @@ import { loadStripe } from "@stripe/stripe-js";
 import { Elements, CardElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { Button } from "@/components/ui/button";
 import { Loader2, X } from "lucide-react";
+import api from "@/lib/api";
 
 // Always initialize Stripe outside of a component's render to avoid recreating the Stripe object on every render.
 const stripePromise = loadStripe("pk_test_TYooMQauvdEDq54NiTphI7jx");
 
-const CheckoutForm = ({ clientSecret, onPaymentSuccess, onCancel }: any) => {
+const CheckoutForm = ({ clientSecret, paymentId, onPaymentSuccess, onCancel }: any) => {
     const stripe = useStripe();
     const elements = useElements();
     const [error, setError] = useState<string | null>(null);
@@ -38,8 +39,16 @@ const CheckoutForm = ({ clientSecret, onPaymentSuccess, onCancel }: any) => {
             setError(stripeError.message || "Payment failed");
             setProcessing(false);
         } else if (paymentIntent && paymentIntent.status === "succeeded") {
-            onPaymentSuccess();
-            setProcessing(false);
+            try {
+                if (paymentId) {
+                    await api.post("/payments/confirm", { paymentId });
+                }
+                onPaymentSuccess();
+            } catch (confirmError: any) {
+                setError(confirmError?.response?.data?.message || "Payment captured, but booking confirmation failed");
+            } finally {
+                setProcessing(false);
+            }
         }
     };
 
@@ -73,7 +82,7 @@ const CheckoutForm = ({ clientSecret, onPaymentSuccess, onCancel }: any) => {
     );
 };
 
-export const StripeCheckoutModal = ({ clientSecret, onClose, onPaymentSuccess, amount }: any) => {
+export const StripeCheckoutModal = ({ clientSecret, paymentId, onClose, onPaymentSuccess, amount }: any) => {
     return (
         <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-card w-full max-w-md border border-border/50 rounded-3xl p-6 shadow-xl relative">
@@ -84,7 +93,12 @@ export const StripeCheckoutModal = ({ clientSecret, onClose, onPaymentSuccess, a
                 <p className="text-sm text-muted-foreground mb-6">You will be charged PKR {amount}</p>
                 
                 <Elements stripe={stripePromise}>
-                    <CheckoutForm clientSecret={clientSecret} onPaymentSuccess={onPaymentSuccess} onCancel={onClose} />
+                    <CheckoutForm
+                        clientSecret={clientSecret}
+                        paymentId={paymentId}
+                        onPaymentSuccess={onPaymentSuccess}
+                        onCancel={onClose}
+                    />
                 </Elements>
             </div>
         </div>

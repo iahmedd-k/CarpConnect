@@ -16,17 +16,16 @@ const RealTimeNotifications = () => {
 
         const socket = io(SOCKET_URL, {
             auth: { token },
-            transports: ['websocket'],
+            transports: ['websocket', 'polling'],
         });
 
         socket.on('connect', () => {
             console.log('Real-time notifications socket connected');
         });
 
-        socket.on('notification', (notif: any) => {
+        const handleNotification = (notif: any) => {
             console.log('New notification received:', notif);
 
-            // Show professional sonner toast
             toast(notif.title || 'New Notification', {
                 description: notif.body || notif.message,
                 icon: getIcon(notif.type),
@@ -36,7 +35,10 @@ const RealTimeNotifications = () => {
                     onClick: () => navigate(notif.link)
                 } : undefined,
             });
-        });
+        };
+
+        socket.on('notification', handleNotification);
+        socket.on('newNotification', handleNotification);
 
         // Ride Lifecycle Events (PRD)
         socket.on('rideStarted', (data: any) => {
@@ -77,6 +79,8 @@ const RealTimeNotifications = () => {
         });
 
         return () => {
+            socket.off('notification', handleNotification);
+            socket.off('newNotification', handleNotification);
             socket.disconnect();
         };
     }, [navigate]);
@@ -84,9 +88,10 @@ const RealTimeNotifications = () => {
     const getIcon = (type: string) => {
         switch (type) {
             case 'bookingConfirmed': return <CheckCircle className="w-5 h-5 text-emerald" />;
-            case 'bookingRejected':
-            case 'bookingCanceled': return <XCircle className="w-5 h-5 text-red-500" />;
-            case 'newBookingRequest': return <Bell className="w-5 h-5 text-amber-500 shadow-glow-amber" />;
+            case 'paymentSuccess': return <CheckCircle className="w-5 h-5 text-emerald" />;
+            case 'bookingCancelled':
+            case 'paymentFailed': return <XCircle className="w-5 h-5 text-red-500" />;
+            case 'newMatch': return <Bell className="w-5 h-5 text-amber-500 shadow-glow-amber" />;
             default: return <Bell className="w-5 h-5 text-primary" />;
         }
     };
